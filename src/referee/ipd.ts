@@ -61,12 +61,11 @@ export async function runRound(agents: Agent[], state: GameState): Promise<GameS
       const a = agents[i];
       const b = agents[j];
 
-      // Ask both agents simultaneously (Promise.all). LLM agents will await inference here;
-      // RandomAgent resolves immediately.
-      const [moveA, moveB] = await Promise.all([
-        a.decide(buildAgentView(results, a.id, b.id)),
-        b.decide(buildAgentView(results, b.id, a.id)),
-      ]);
+      // Sequential, not concurrent. wllama holds one loaded model and can only run one
+      // inference at a time — concurrent calls on the same client return null and crash.
+      // RandomAgent resolves instantly so the sequencing cost is negligible.
+      const moveA = await a.decide(buildAgentView(results, a.id, b.id));
+      const moveB = await b.decide(buildAgentView(results, b.id, a.id));
 
       // Validate — an LLM agent could return garbage. Default to defect (safe, penalises
       // the broken agent without crashing the game).

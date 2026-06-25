@@ -65,6 +65,8 @@ export class WllamaClient {
       // answer. Always disable it for move extraction.
       chat_template_kwargs: { enable_thinking: false },
     });
+    // wllama returns null on concurrent calls or internal failure rather than throwing.
+    if (!response) throw new Error("wllama returned null — likely a concurrent inference call");
     return response.choices[0].message.content ?? "";
   }
 }
