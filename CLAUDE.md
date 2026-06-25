@@ -5,7 +5,7 @@ See `llm-arena-build-plan.md` for the full build plan — phases, locked decisio
 ## Status
 
 - Phase 0 (de-risk spike) — complete. Key findings: GPU offload requires explicit `n_gpu_layers: -1` (wllama default is CPU-only despite README claims); thinking mode requires explicit `enable_thinking: false`; single-word move extraction wins over tool-call (100% valid, 6× faster); OPFS cache confirmed; system-prompt personalities confirmed distinct.
-- Phase 1 — in progress. Milestone 1a (referee + IPD rules + RandomAgent, unit-tested) complete. Next: 1b (LLMAgent, one full match end-to-end).
+- Phase 1 — in progress. Milestones 1a and 1b complete. Next: 1c (all-LLM match, 3–4 distinct personalities).
 
 ## Communication style
 
