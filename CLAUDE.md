@@ -4,7 +4,8 @@ See `llm-arena-build-plan.md` for the full build plan — phases, locked decisio
 
 ## Status
 
-- Phase 0 (de-risk spike) — not started.
+- Phase 0 (de-risk spike) — complete. Key findings: GPU offload requires explicit `n_gpu_layers: -1` (wllama default is CPU-only despite README claims); thinking mode requires explicit `enable_thinking: false`; single-word move extraction wins over tool-call (100% valid, 6× faster); OPFS cache confirmed; system-prompt personalities confirmed distinct.
+- Phase 1 — not started. See `llm-arena-build-plan.md`.
 
 ## Communication style
 
@@ -60,6 +61,14 @@ See `llm-arena-build-plan.md` for the full build plan — phases, locked decisio
 - CSS: kebab-case class names.
 - Env vars: UPPER_SNAKE_CASE.
 - Names describe purpose, not type; shorter is fine when context makes it clear.
+
+COMMENTS
+- Comment thoroughly for a reader who does NOT know LLM/ML internals. Assume I don't know terms like layer, token, offload, logits, KV cache, quantization, temperature, sampling — define each in plain language at first use.
+- Explain WHY a step exists and what it does conceptually, not just the mechanics. A plain-English sentence above each non-obvious block.
+- For any wllama/llama.cpp call or magic value (e.g. n_gpu_layers: -1), add a one-line comment: what it does and why this value.
+- Plain language over jargon; if a term is unavoidable, define it inline the first time it appears.
+- Scope: this is a learning project. This rule OVERRIDES the global "comments only where the why isn't obvious" rule for this repo.
+
 
 ## Notes
 
