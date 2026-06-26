@@ -48,7 +48,12 @@ export class WllamaClient {
         // Without this, messages are concatenated raw and quality degrades significantly.
         jinja: true,
         progressCallback: ({ loaded, total }) => {
-          onProgress(total ? Math.round((loaded / total) * 100) : 0);
+          // Cloudflare Workers strips Content-Length from streamed responses, so
+          // `total` arrives as 0. Fall back to the known file size so the progress
+          // bar shows a real percentage instead of being stuck at 0%.
+          const knownSize = 535_171_328;
+          const t = total || knownSize;
+          onProgress(Math.round((loaded / t) * 100));
         },
       }
     );
