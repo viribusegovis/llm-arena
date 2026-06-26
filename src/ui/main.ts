@@ -7,22 +7,28 @@ import { initLayout } from "./render";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 // --- Dev logging infrastructure --------------------------------------------------
-// Rotates spike-log.txt on each page load, then forwards every console line to it.
-// The Vite file-logger plugin (vite.config.ts) handles the server side.
+// Forwards every console line to spike-log.txt via the Vite file-logger plugin.
+// On Cloudflare (or any host without the plugin) the /__log endpoint returns 404.
+// We probe it once at startup: if the probe succeeds we enable logging; if it
+// fails we disable it for the whole session so there is no POST-404 spam.
 
-fetch("/__log", { method: "POST", body: "__RESET__" }).catch(() => {});
+let loggingEnabled = false;
+fetch("/__log", { method: "POST", body: "__RESET__" })
+  .then((r) => { loggingEnabled = r.ok; })
+  .catch(() => {});
 
 const stringifyArg = (a: unknown) =>
   typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })();
 
-// Noisy-but-benign internal llama.cpp scheduler messages — suppress from the log file,
-// still visible in browser DevTools.
-const LOG_SKIP = [/slot update_slots:.*restored context checkpoint/];
+// llama.cpp fires "slot update_slots" on every inference call for hybrid/recurrent
+// models like Qwen3.5 (Gated DeltaNet). They carry no useful info — suppress all variants.
+const LOG_SKIP = [/slot update_slots:/];
 
 for (const level of ["log", "warn", "error", "debug"] as const) {
   const original = console[level].bind(console);
   console[level] = (...args: unknown[]) => {
     original(...args);
+    if (!loggingEnabled) return;
     const line = `[${new Date().toISOString()}] ${level.toUpperCase()}: ${args.map(stringifyArg).join(" ")}`;
     if (LOG_SKIP.some((re) => re.test(line))) return;
     fetch("/__log", { method: "POST", body: line }).catch(() => {});
