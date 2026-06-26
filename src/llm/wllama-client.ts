@@ -5,15 +5,11 @@ import type { ChatCompletionChunk } from "@wllama/wllama";
 // runs the neural network math.
 import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 
-// Direct download URL for the model file. "Quantized" means the model's weights (numbers
-// that encode what the model has learned) have been compressed from 32-bit floats to
-// ~4 bits each, shrinking the file from ~1.5 GB to ~500 MB at the cost of slight quality loss.
-const MODEL_URL =
-  "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_1.gguf";
-
-// Exact byte size of the file above, obtained from the HuggingFace API.
-// Used by the HEAD-request patch below to keep the progress bar accurate.
-const MODEL_SIZE_BYTES = 535_171_328;
+// The model is proxied through /model on the same origin (Cloudflare Worker in prod,
+// Vite dev middleware in dev). Same-origin URLs bypass browser CORS rules entirely,
+// which is necessary because HuggingFace's new XET CDN doesn't send CORS headers
+// on browser fetch requests. The model file itself still lives on HuggingFace.
+const MODEL_URL = `${window.location.origin}/model`;
 
 // A message in a conversation, matching the OpenAI chat format wllama expects.
 // "system" = hidden setup instructions (personality), "user" = the human turn,
@@ -36,22 +32,8 @@ export class WllamaClient {
   // is a browser storage API that wllama uses automatically — no setup needed.
   // onProgress receives 0–100 so the UI can show a progress bar.
   async load(onProgress: (pct: number) => void): Promise<void> {
-    // HuggingFace's CDN does not send CORS headers on HEAD requests, only on GET.
-    // wllama calls HEAD before every download to measure the file size for progress reporting.
-    // That HEAD fails with a CORS error, aborting the download before it starts.
-    // Fix: wrap window.fetch to intercept HEAD requests to HuggingFace URLs and return a
-    // synthetic 200 response with the known file size. The actual GET download is unaffected.
-    const realFetch = window.fetch.bind(window);
-    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (init?.method === "HEAD" && url.includes("huggingface.co")) {
-        return Promise.resolve(
-          new Response(null, { status: 200, headers: { "content-length": String(MODEL_SIZE_BYTES) } })
-        );
-      }
-      return realFetch(input, init);
-    };
-
+    // MODEL_URL is /model on the same origin, proxied to HuggingFace server-side.
+    // No CORS patching needed — same-origin requests are always allowed by the browser.
     await this.wllama.loadModelFromUrl(
       MODEL_URL,
       {

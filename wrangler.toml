@@ -1,5 +1,9 @@
 name = "llm-arena"
 compatibility_date = "2024-01-01"
+# Worker script that handles the /model proxy route; all other routes fall through to assets.
+main = "src/worker.ts"
 
 [assets]
 directory = "./dist"
+# Binding name used in worker.ts to serve static files for non-/model routes.
+binding = "ASSETS"
