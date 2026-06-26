@@ -9,7 +9,8 @@ import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 // that encode what the model has learned) have been compressed from 32-bit floats to
 // ~4 bits each, shrinking the file from ~3 GB to ~500 MB at the cost of slight quality loss.
 const MODEL_REPO = "unsloth/Qwen3.5-0.8B-GGUF";
-const MODEL_FILE = "Qwen3.5-0.8B-Q4_K_M.gguf";
+// Q4_K_M does not exist in this repo; Q4_1 is the closest 4-bit equivalent (~500 MB).
+const MODEL_FILE = "Qwen3.5-0.8B-Q4_1.gguf";
 
 // A message in a conversation, matching the OpenAI chat format wllama expects.
 // "system" = hidden setup instructions (personality), "user" = the human turn,
