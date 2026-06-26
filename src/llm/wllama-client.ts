@@ -9,7 +9,7 @@ import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 // Vite dev middleware in dev). Same-origin URLs bypass browser CORS rules entirely,
 // which is necessary because HuggingFace's new XET CDN doesn't send CORS headers
 // on browser fetch requests. The model file itself still lives on HuggingFace.
-const MODEL_URL = `${window.location.origin}/model`;
+const MODEL_URL = `${window.location.origin}/model.gguf`;
 
 // A message in a conversation, matching the OpenAI chat format wllama expects.
 // "system" = hidden setup instructions (personality), "user" = the human turn,

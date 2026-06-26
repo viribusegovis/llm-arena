@@ -26,7 +26,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/model") {
+    if (url.pathname === "/model.gguf") {
       // HEAD: wllama calls this before every download to read Content-Length for the
       // progress bar. Return a synthetic response rather than proxying HF, because
       // HF's CDN also doesn't cooperate with browser HEAD requests.

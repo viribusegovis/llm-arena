@@ -31,7 +31,7 @@ const fileLogger: Plugin = {
     // Dev mirror of the Cloudflare Worker's /model route.
     // Same problem as prod: HF's XET CDN has no CORS headers for browser fetches.
     // Node's fetch runs server-side, so no CORS applies — identical fix, different runtime.
-    server.middlewares.use("/model", (req, res) => {
+    server.middlewares.use("/model.gguf", (req, res) => {
       const MODEL_HF_URL =
         "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_1.gguf";
       const MODEL_SIZE_BYTES = 535_171_328;
