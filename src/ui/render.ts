@@ -1,15 +1,21 @@
 import type { GameState } from "../referee/types";
+import type { MafiaGameState } from "../referee/mafia";
 
-// ── Agent palette ─────────────────────────────────────────────────────────────
-// One accent color per personality. Used consistently: score bar fill, streaming-box
-// left border, heatmap row label, and agent name while it is deciding.
-// hex: CSS color string. rgb: same values as "r,g,b" for building rgba() strings
-// without a runtime hex parser.
+// One accent color per agent, shared across both game types.
+// hex: CSS color string. rgb: same values as "r,g,b" for rgba() strings.
 const AGENT_COLORS: Record<string, { hex: string; rgb: string }> = {
-  "tit-for-tat":      { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue  — reciprocal, reliable
-  "always-defect":    { hex: "#f55b5b", rgb: "245,91,91"   }, // red   — purely self-interested
-  "always-cooperate": { hex: "#6ee77a", rgb: "110,231,122" }, // green — unconditional altruist
-  "grudger":          { hex: "#f5a623", rgb: "245,166,35"  }, // amber — patient but unforgiving
+  // ── Mafia agents ──────────────────────────────────────────────────────────
+  "paranoid":   { hex: "#f55b5b", rgb: "245,91,91"   }, // red    — accusatory, volatile
+  "analytical": { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue   — calm, methodical
+  "naive":      { hex: "#6ee77a", rgb: "110,231,122" }, // green  — trusting, honest
+  "deceptive":  { hex: "#f5a623", rgb: "245,166,35"  }, // amber  — hard to read
+  "impulsive":  { hex: "#c47ef5", rgb: "196,126,245" }, // purple — jumps to conclusions
+  "reserved":   { hex: "#5fd0c0", rgb: "95,208,192"  }, // teal   — quiet, watchful
+  // ── IPD agents ───────────────────────────────────────────────────────────
+  "tit-for-tat":      { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue
+  "always-defect":    { hex: "#f55b5b", rgb: "245,91,91"   }, // red
+  "always-cooperate": { hex: "#6ee77a", rgb: "110,231,122" }, // green
+  "grudger":          { hex: "#f5a623", rgb: "245,166,35"  }, // amber
 };
 const FALLBACK_COLOR = { hex: "#8892a4", rgb: "136,146,164" };
 
@@ -17,7 +23,8 @@ function agentColor(id: string) {
   return AGENT_COLORS[id] ?? FALLBACK_COLOR;
 }
 
-// ── ArenaUI interface ─────────────────────────────────────────────────────────
+// ── IPD (Prisoner's Dilemma) ─────────────────────────────────────────────────
+
 export interface ArenaUI {
   setStatus(text: string): void;
   // 0–99: show the loading bar at that fill percentage. 100: hide the bar.
@@ -29,11 +36,10 @@ export interface ArenaUI {
   appendLog(line: string): void;
 }
 
-// ── Layout ────────────────────────────────────────────────────────────────────
-export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
+export function initIPDLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
   root.innerHTML = `
     <h1>LLM Arena</h1>
-    <p class="tagline">Iterated Prisoner&rsquo;s Dilemma &middot; 4 agents &middot; 10 rounds</p>
+    <p class="tagline">Prisoner&rsquo;s Dilemma &middot; 4 agents &middot; 10 rounds</p>
 
     <p id="status" class="status">Starting&hellip;</p>
     <div id="progress-wrap" class="progress-wrap">
@@ -124,8 +130,6 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
   const heatmapEl      = root.querySelector<HTMLElement>("#heatmap")!;
   const logEl          = root.querySelector<HTMLElement>("#log")!;
 
-  // Pre-seed the score bars and heatmap with zeroes so the layout is visible
-  // before any rounds play.
   const zeroState: GameState = {
     round: 0,
     scores: Object.fromEntries(agentIds.map((id) => [id, 0])),
@@ -135,13 +139,10 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
   renderHeatmap(zeroState, agentIds, heatmapEl);
 
   return {
-    setStatus(text) {
-      statusEl.textContent = text;
-    },
+    setStatus(text) { statusEl.textContent = text; },
 
     setProgress(pct) {
       if (pct >= 100) {
-        // Loading done — hide the bar entirely.
         progressWrapEl.hidden = true;
       } else {
         progressWrapEl.hidden = false;
@@ -150,8 +151,6 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
     },
 
     setStreamingAgent(agentId) {
-      // Update the CSS custom property so the left border and agent label both
-      // switch to this agent's color via the CSS rules in index.html.
       const color = agentColor(agentId);
       streamBoxEl.style.setProperty("--agent-color", color.hex);
       streamAgentEl.textContent = agentId;
@@ -162,25 +161,18 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
       streamOutputEl.textContent += fragment;
     },
 
-    updateScores(state) {
-      renderScoreBars(state, scoreBarsEl);
-    },
+    updateScores(state) { renderScoreBars(state, scoreBarsEl); },
 
-    updateHeatmap(state) {
-      renderHeatmap(state, agentIds, heatmapEl);
-    },
+    updateHeatmap(state) { renderHeatmap(state, agentIds, heatmapEl); },
 
     appendLog(line) {
       logEl.textContent += line + "\n";
-      // Keep the latest entry visible.
       logEl.scrollTop = logEl.scrollHeight;
     },
   };
 }
 
-// ── Score bars ────────────────────────────────────────────────────────────────
-// Each bar is sized relative to the current leader so a small early lead still
-// shows up visually. Sorted highest-to-lowest.
+// Each bar is sized relative to the current leader. Sorted highest-to-lowest.
 function renderScoreBars(state: GameState, container: HTMLElement): void {
   const entries = Object.entries(state.scores).sort(([, a], [, b]) => b - a);
   const maxScore = Math.max(1, ...entries.map(([, s]) => s));
@@ -189,7 +181,6 @@ function renderScoreBars(state: GameState, container: HTMLElement): void {
     .map(([id, score]) => {
       const pct = Math.round((score / maxScore) * 100);
       const color = agentColor(id);
-      // --agent-color is picked up by .bar-fill's background gradient in the CSS.
       return `
         <div class="bar-row">
           <span class="bar-label">${id}</span>
@@ -203,17 +194,14 @@ function renderScoreBars(state: GameState, container: HTMLElement): void {
     .join("");
 }
 
-// ── Heatmap ───────────────────────────────────────────────────────────────────
-// Rows = agent A, columns = agent B. Each cell shows A's cumulative score from
-// all rounds vs B. Cell backgrounds are heat-coded: the row agent's color at
-// varying opacity (transparent at 0, 65% opacity at the global max score).
+// Rows = agent A, columns = agent B. Each cell shows A's cumulative score vs B.
+// Cell backgrounds are heat-coded with the row agent's color at varying opacity.
 function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElement): void {
   if (state.results.length === 0) {
     container.innerHTML = "<p class='dim'>No rounds played yet.</p>";
     return;
   }
 
-  // Sum scores per pairing.
   const lookup: Record<string, Record<string, number>> = {};
   for (const id of agentIds) {
     lookup[id] = Object.fromEntries(agentIds.map((other) => [other, 0]));
@@ -222,7 +210,6 @@ function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElem
     lookup[r.agentId][r.opponentId] += r.score;
   }
 
-  // Find the global max across all non-diagonal cells for heat-scaling.
   const allScores = agentIds.flatMap((a) =>
     agentIds.filter((b) => b !== a).map((b) => lookup[a][b]),
   );
@@ -237,13 +224,10 @@ function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElem
         .map((b) => {
           if (a === b) return `<td class="heatmap-self">—</td>`;
           const score = lookup[a][b];
-          // Alpha 0 → 0.65: low scorer is transparent, top scorer is clearly tinted.
           const alpha = ((score / maxScore) * 0.65).toFixed(2);
-          const bg = `rgba(${color.rgb},${alpha})`;
-          return `<td class="heatmap-cell" style="background:${bg}">${score}</td>`;
+          return `<td class="heatmap-cell" style="background:rgba(${color.rgb},${alpha})">${score}</td>`;
         })
         .join("");
-      // Row header takes the row agent's color so you can scan by personality.
       return `<tr><th class="heatmap-row-header" style="color:${color.hex}">${a}</th>${cells}</tr>`;
     })
     .join("");
@@ -254,4 +238,213 @@ function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElem
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+// ── Mafia ────────────────────────────────────────────────────────────────────
+
+export interface MafiaUI {
+  setStatus(text: string): void;
+  // 0–99: show the loading bar at that fill percentage. 100: hide the bar.
+  setProgress(pct: number): void;
+  // Switch the streaming box to a new active speaker (clears previous output).
+  setStreamingAgent(agentId: string): void;
+  appendStreamToken(fragment: string): void;
+  // Re-render the player grid from the current game state.
+  updatePlayers(state: MafiaGameState): void;
+  // Display the game-over banner.
+  showWinner(winner: "mafia" | "villagers"): void;
+  appendLog(line: string): void;
+}
+
+export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI {
+  root.innerHTML = `
+    <h1>LLM Arena</h1>
+    <p class="tagline">Mini-Mafia &middot; 8 agents &middot; in-browser WebGPU inference</p>
+
+    <p id="status" class="status">Starting&hellip;</p>
+    <div id="progress-wrap" class="progress-wrap">
+      <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+    </div>
+
+    <section class="panel">
+      <h2>Players</h2>
+      <div id="player-grid" class="player-grid"></div>
+      <div id="win-banner"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Log</h2>
+      <pre id="log" class="log"></pre>
+    </section>
+
+    <section class="panel" id="explainer">
+      <h2>How it works</h2>
+      <div class="explainer-body">
+        <p class="explainer-p">
+          Eight instances of the same tiny language model
+          (<a class="explainer-link" href="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF" target="_blank">Qwen3.5-0.8B</a>,
+          ~510&nbsp;MB, 4-bit quantized) run entirely in your browser using WebGPU.
+          Each instance is given a different <em>personality</em> via its system prompt and
+          assigned a secret role. They play <strong>Mini-Mafia</strong> autonomously — no server,
+          no API, no token bill.
+        </p>
+
+        <p class="explainer-subhead">The roles</p>
+        <ul class="explainer-agents">
+          <li><span class="agent-chip" style="color:#f55b5b">Mafioso</span> &mdash; knows their identity. Each night they secretly choose one player to eliminate. During the day they must blend in and deflect suspicion.</li>
+          <li><span class="agent-chip" style="color:#5bb8f5">Detective</span> &mdash; each night secretly investigates one player and learns their true role. Must use that knowledge without giving themselves away.</li>
+          <li><span class="agent-chip" style="color:#f5c842">Medic</span> &mdash; each night secretly protects one player from the mafioso&rsquo;s kill. If the medic protects the right person, nobody dies that night.</li>
+          <li><span class="agent-chip" style="color:#6ee77a">Villager &times; 5</span> &mdash; no night action. Must read the room during discussions and vote wisely.</li>
+        </ul>
+
+        <p class="explainer-subhead">Win conditions</p>
+        <p class="explainer-p">
+          <strong>Mafia wins</strong> when their count equals or exceeds the villagers &mdash; they can no longer be outvoted.
+          <strong>Villagers win</strong> when the mafioso is eliminated by a day vote.
+        </p>
+
+        <p class="explainer-subhead">Each round</p>
+        <p class="explainer-p">
+          Night: the mafioso picks a kill target; the detective picks someone to investigate.
+          Day discussion: all alive players say what they think (streamed live in the box above).
+          Day vote: all alive players vote to eliminate someone &mdash; plurality wins; ties skip elimination.
+          Roles are revealed publicly when a player is eliminated.
+        </p>
+
+        <p class="explainer-subhead">Why the wait</p>
+        <p class="explainer-p">
+          On first load, the model downloads (~510&nbsp;MB) and is cached in your browser&rsquo;s
+          private storage (OPFS); subsequent visits skip the download. Agents run one at a time
+          because the model is a single shared GPU-resident instance — turns appear sequentially
+          as each agent &ldquo;thinks.&rdquo;
+        </p>
+      </div>
+    </section>
+  `;
+
+  const statusEl       = root.querySelector<HTMLElement>("#status")!;
+  const progressWrapEl = root.querySelector<HTMLElement>("#progress-wrap")!;
+  const progressFillEl = root.querySelector<HTMLElement>("#progress-fill")!;
+  const playerGridEl   = root.querySelector<HTMLElement>("#player-grid")!;
+  const winBannerEl    = root.querySelector<HTMLElement>("#win-banner")!;
+  const logEl          = root.querySelector<HTMLElement>("#log")!;
+
+  // Persists each player's latest quote across re-renders so it stays visible
+  // in their row even after updatePlayers() rebuilds the grid DOM.
+  const quotes: Record<string, string> = {};
+  // The player currently streaming tokens into their inline quote (null = nobody).
+  let activeQuoteId: string | null = null;
+
+  // Pre-render the player grid with all players alive (roles hidden until eliminated).
+  const emptyState: MafiaGameState = {
+    phase: "night", round: 1,
+    players: agentIds.map((id) => ({ id, role: "villager", isAlive: true })),
+    investigations: [], protections: [], transcript: [], votes: {}, nightActions: {}, eliminated: [],
+  };
+  renderPlayerGrid(emptyState, agentIds, playerGridEl, quotes);
+
+  return {
+    setStatus(text) { statusEl.textContent = text; },
+
+    setProgress(pct) {
+      if (pct >= 100) {
+        progressWrapEl.hidden = true;
+      } else {
+        progressWrapEl.hidden = false;
+        progressFillEl.style.width = `${pct}%`;
+      }
+    },
+
+    setStreamingAgent(agentId) {
+      // Remove cursor from whoever was speaking before.
+      if (activeQuoteId !== null) {
+        const prev = playerGridEl.querySelector<HTMLElement>(`[data-quote-for="${activeQuoteId}"]`);
+        if (prev) prev.classList.remove("streaming");
+      }
+      activeQuoteId = agentId;
+      quotes[agentId] = "";
+      const el = playerGridEl.querySelector<HTMLElement>(`[data-quote-for="${agentId}"]`);
+      if (el) {
+        el.textContent = "";
+        el.classList.add("streaming");
+      }
+    },
+
+    appendStreamToken(fragment) {
+      if (activeQuoteId === null) return;
+      quotes[activeQuoteId] = (quotes[activeQuoteId] ?? "") + fragment;
+      const el = playerGridEl.querySelector<HTMLElement>(`[data-quote-for="${activeQuoteId}"]`);
+      if (el) el.textContent += fragment;
+    },
+
+    updatePlayers(state) {
+      // Phase is over — no active speaker, re-render with persisted quotes.
+      activeQuoteId = null;
+      renderPlayerGrid(state, agentIds, playerGridEl, quotes);
+    },
+
+    showWinner(winner) {
+      const cls   = winner === "mafia" ? "win-mafia" : "win-villagers";
+      const label = winner === "mafia" ? "Mafia wins" : "Villagers win";
+      winBannerEl.className = `win-banner ${cls}`;
+      winBannerEl.textContent = label;
+    },
+
+    appendLog(line) {
+      logEl.textContent += line + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    },
+  };
+}
+
+// Each row shows the agent's name, role badge, elimination note, and their latest
+// inline quote. Quotes persist via the `quotes` map passed in from the layout closure.
+function renderPlayerGrid(
+  state: MafiaGameState,
+  agentIds: string[],
+  container: HTMLElement,
+  quotes: Record<string, string>,
+): void {
+  container.innerHTML = agentIds
+    .map((id) => {
+      const player  = state.players.find((p) => p.id === id)!;
+      const color   = agentColor(id);
+      const elim    = state.eliminated.find((e) => e.playerId === id);
+      const isAlive = player.isAlive;
+
+      const dotClass = isAlive ? "alive" : "dead";
+      const dot      = isAlive ? "●" : "✕";
+      const rowClass = isAlive ? "" : " eliminated";
+
+      // Role badge: "?" while alive, actual role once eliminated.
+      const badge = elim
+        ? `<span class="player-badge role-${elim.role}">${elim.role}</span>`
+        : `<span class="player-badge role-hidden">?</span>`;
+
+      // Elimination note: round + cause, visible only once eliminated.
+      const elimNote = elim
+        ? `<span class="elim-cause">r${elim.round} · ${elim.cause === "night-kill" ? "night kill" : "voted out"}</span>`
+        : "";
+
+      return `
+        <div class="player-row${rowClass}" style="--agent-color:${color.hex}">
+          <div class="player-row-main">
+            <span class="player-dot ${dotClass}">${dot}</span>
+            <span class="player-name">${id}</span>
+            ${badge}
+            ${elimNote}
+          </div>
+          <div class="player-quote" data-quote-for="${id}"></div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // Set quote text via textContent (not innerHTML) to avoid XSS from model output.
+  for (const id of agentIds) {
+    if (quotes[id]) {
+      const el = container.querySelector<HTMLElement>(`[data-quote-for="${id}"]`);
+      if (el) el.textContent = quotes[id];
+    }
+  }
 }

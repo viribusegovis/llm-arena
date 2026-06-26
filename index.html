@@ -204,6 +204,55 @@
       .explainer-link { color: #5bb8f5; text-decoration: none; }
       .explainer-link:hover { text-decoration: underline; }
 
+      /* ── Mafia player grid ──────────────────────────────────────────────── */
+      .player-grid { display: flex; flex-direction: column; gap: 0.4rem; }
+      .player-row {
+        display: flex; flex-direction: column;
+        padding: 0.45rem 0.8rem; background: #0e1420; border-radius: 4px;
+        border-left: 3px solid var(--agent-color, #2a3040);
+        transition: opacity 0.5s;
+      }
+      .player-row.eliminated { opacity: 0.4; }
+      .player-row-main { display: flex; align-items: center; gap: 0.7rem; }
+      .player-dot { font-size: 0.7rem; flex-shrink: 0; }
+      .player-dot.alive { color: #6ee77a; }
+      .player-dot.dead  { color: #3a4050; }
+      .player-name { flex: 1; font-weight: bold; font-size: 0.88rem; color: var(--agent-color, #8892a4); }
+      /* Inline quote: hidden when empty, streams in during day-discuss */
+      .player-quote { display: none; font-style: italic; font-size: 0.76rem; color: var(--agent-color, #8892a4); opacity: 0.75; padding-top: 0.2rem; padding-left: 1.3rem; line-height: 1.45; }
+      .player-quote:not(:empty) { display: block; }
+      /* Blinking cursor on the active speaker's quote */
+      .player-quote.streaming::after { content: "▌"; animation: blink 0.8s step-end infinite; font-style: normal; }
+      .player-badge {
+        font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em;
+        padding: 0.15rem 0.45rem; border-radius: 2px; flex-shrink: 0;
+      }
+      .role-hidden    { background: #141922; color: #2e3a52; }
+      .role-mafioso   { background: #2d0f0f; color: #f55b5b; }
+      .role-detective { background: #0d1f2e; color: #5bb8f5; }
+      .role-medic     { background: #2a2218; color: #f5c842; }
+      .role-villager  { background: #0c1f16; color: #6ee77a; }
+      .elim-cause { font-size: 0.68rem; color: #3a4050; }
+
+      /* ── Game-over banner ────────────────────────────────────────────────── */
+      .win-banner {
+        margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 4px;
+        font-size: 0.9rem; font-weight: bold; text-align: center; letter-spacing: 0.06em;
+      }
+      .win-mafia     { background: #2d0f0f; color: #f55b5b; border: 1px solid #5a1a1a; }
+      .win-villagers { background: #0c1f16; color: #6ee77a; border: 1px solid #1a5a2a; }
+
+      /* ── Tab switcher ───────────────────────────────────────────────────── */
+      .tab-bar { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+      .tab-btn {
+        font-family: inherit; font-size: 0.75rem; text-transform: uppercase;
+        letter-spacing: 0.1em; padding: 0.35rem 0.9rem; border-radius: 3px;
+        border: 1px solid #2a3040; background: transparent; color: #4a5568;
+        cursor: pointer; transition: all 0.2s;
+      }
+      .tab-btn.active { background: #1e2838; color: #5bb8f5; border-color: #5bb8f5; }
+      .tab-btn:hover:not(.active) { border-color: #3a4050; color: #8892a4; }
+
       /* ── Scrolling text log ──────────────────────────────────────────────── */
       .log {
         background: #070910;
