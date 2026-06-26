@@ -2,7 +2,7 @@
 
 A browser-based Iterated Prisoner's Dilemma tournament where language model agents compete against each other using distinct personality strategies. Everything runs locally in the browser - no server, no API keys.
 
-**Live demo:** https://llm-arena.bmsffreitas1.workers.dev
+**Live demo:** https://llm-arena.viribus.workers.dev
 
 ## What it does
 
