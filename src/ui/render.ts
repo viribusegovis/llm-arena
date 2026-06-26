@@ -1,37 +1,48 @@
 import type { GameState } from "../referee/types";
 
-// The set of DOM update methods exposed to main.ts.
-// These are closures over the DOM nodes built by initLayout() — callers never touch
-// the raw elements, which keeps the layout logic fully contained in this file.
+// ── Agent palette ─────────────────────────────────────────────────────────────
+// One accent color per personality. Used consistently: score bar fill, streaming-box
+// left border, heatmap row label, and agent name while it is deciding.
+// hex: CSS color string. rgb: same values as "r,g,b" for building rgba() strings
+// without a runtime hex parser.
+const AGENT_COLORS: Record<string, { hex: string; rgb: string }> = {
+  "tit-for-tat":      { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue  — reciprocal, reliable
+  "always-defect":    { hex: "#f55b5b", rgb: "245,91,91"   }, // red   — purely self-interested
+  "always-cooperate": { hex: "#6ee77a", rgb: "110,231,122" }, // green — unconditional altruist
+  "grudger":          { hex: "#f5a623", rgb: "245,166,35"  }, // amber — patient but unforgiving
+};
+const FALLBACK_COLOR = { hex: "#8892a4", rgb: "136,146,164" };
+
+function agentColor(id: string) {
+  return AGENT_COLORS[id] ?? FALLBACK_COLOR;
+}
+
+// ── ArenaUI interface ─────────────────────────────────────────────────────────
 export interface ArenaUI {
-  // Updates the status line (e.g. "Round 3/10 — tit-for-tat deciding…")
   setStatus(text: string): void;
-  // Clears the streaming output box and labels it with the given agent name.
-  // Call this just before an agent starts deciding.
+  // 0–99: show the loading bar at that fill percentage. 100: hide the bar.
+  setProgress(pct: number): void;
   setStreamingAgent(agentId: string): void;
-  // Appends a text fragment to the streaming output box.
-  // Call this from the onToken callback while the model is generating.
   appendStreamToken(fragment: string): void;
-  // Redraws the score bars to reflect the current GameState.
   updateScores(state: GameState): void;
-  // Redraws the head-to-head payoff grid to reflect the current GameState.
   updateHeatmap(state: GameState): void;
-  // Appends a line to the scrolling text log at the bottom of the page.
   appendLog(line: string): void;
 }
 
-// Builds the full page layout inside the given root element and returns the ArenaUI
-// control object. Call once before the match starts, passing the list of agent IDs
-// so the score bars and heatmap can be pre-seeded with zeroes.
+// ── Layout ────────────────────────────────────────────────────────────────────
 export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
   root.innerHTML = `
     <h1>LLM Arena</h1>
-    <p id="status" class="status">Starting…</p>
+    <p class="tagline">Iterated Prisoner&rsquo;s Dilemma &middot; 4 agents &middot; 10 rounds</p>
 
-    <!-- Streaming box: shows the model "typing" its move token by token -->
+    <p id="status" class="status">Starting&hellip;</p>
+    <div id="progress-wrap" class="progress-wrap">
+      <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+    </div>
+
     <div id="stream-box" class="stream-box">
       <span id="stream-agent" class="stream-agent"></span>
-      <span class="stream-arrow"> → </span>
+      <span class="stream-arrow"> &rarr; </span>
       <span id="stream-output" class="stream-output"></span>
     </div>
 
@@ -52,13 +63,17 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
   `;
 
   const statusEl       = root.querySelector<HTMLElement>("#status")!;
+  const progressWrapEl = root.querySelector<HTMLElement>("#progress-wrap")!;
+  const progressFillEl = root.querySelector<HTMLElement>("#progress-fill")!;
+  const streamBoxEl    = root.querySelector<HTMLElement>("#stream-box")!;
   const streamAgentEl  = root.querySelector<HTMLElement>("#stream-agent")!;
   const streamOutputEl = root.querySelector<HTMLElement>("#stream-output")!;
   const scoreBarsEl    = root.querySelector<HTMLElement>("#score-bars")!;
   const heatmapEl      = root.querySelector<HTMLElement>("#heatmap")!;
   const logEl          = root.querySelector<HTMLElement>("#log")!;
 
-  // Pre-render zero-score bars so the layout is visible before any rounds play.
+  // Pre-seed the score bars and heatmap with zeroes so the layout is visible
+  // before any rounds play.
   const zeroState: GameState = {
     round: 0,
     scores: Object.fromEntries(agentIds.map((id) => [id, 0])),
@@ -72,8 +87,21 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
       statusEl.textContent = text;
     },
 
+    setProgress(pct) {
+      if (pct >= 100) {
+        // Loading done — hide the bar entirely.
+        progressWrapEl.hidden = true;
+      } else {
+        progressWrapEl.hidden = false;
+        progressFillEl.style.width = `${pct}%`;
+      }
+    },
+
     setStreamingAgent(agentId) {
-      // Clear leftover output from the previous decision and label the new agent.
+      // Update the CSS custom property so the left border and agent label both
+      // switch to this agent's color via the CSS rules in index.html.
+      const color = agentColor(agentId);
+      streamBoxEl.style.setProperty("--agent-color", color.hex);
       streamAgentEl.textContent = agentId;
       streamOutputEl.textContent = "";
     },
@@ -92,45 +120,48 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
 
     appendLog(line) {
       logEl.textContent += line + "\n";
-      // Auto-scroll to the bottom so the latest entry is always visible.
+      // Keep the latest entry visible.
       logEl.scrollTop = logEl.scrollHeight;
     },
   };
 }
 
-// Redraws the score bar section. Bars are sized relative to the current leader's score,
-// so even a small early lead shows up visually. Sorted highest-to-lowest.
+// ── Score bars ────────────────────────────────────────────────────────────────
+// Each bar is sized relative to the current leader so a small early lead still
+// shows up visually. Sorted highest-to-lowest.
 function renderScoreBars(state: GameState, container: HTMLElement): void {
   const entries = Object.entries(state.scores).sort(([, a], [, b]) => b - a);
-  // Use max 1 to avoid division-by-zero when all scores are 0 at the start.
   const maxScore = Math.max(1, ...entries.map(([, s]) => s));
 
   container.innerHTML = entries
     .map(([id, score]) => {
       const pct = Math.round((score / maxScore) * 100);
+      const color = agentColor(id);
+      // --agent-color is picked up by .bar-fill's background gradient in the CSS.
       return `
         <div class="bar-row">
           <span class="bar-label">${id}</span>
           <div class="bar-track">
-            <div class="bar-fill" style="width: ${pct}%"></div>
+            <div class="bar-fill" style="--agent-color:${color.hex};width:${pct}%"></div>
           </div>
-          <span class="bar-score">${score}</span>
+          <span class="bar-score" style="color:${color.hex}">${score}</span>
         </div>
       `;
     })
     .join("");
 }
 
-// Redraws the head-to-head payoff grid. Rows = agent A, columns = agent B.
-// Each cell shows A's cumulative score from all rounds played against B.
-// The diagonal (A vs A) is blank — agents don't play themselves.
+// ── Heatmap ───────────────────────────────────────────────────────────────────
+// Rows = agent A, columns = agent B. Each cell shows A's cumulative score from
+// all rounds vs B. Cell backgrounds are heat-coded: the row agent's color at
+// varying opacity (transparent at 0, 65% opacity at the global max score).
 function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElement): void {
   if (state.results.length === 0) {
     container.innerHTML = "<p class='dim'>No rounds played yet.</p>";
     return;
   }
 
-  // Build a score lookup: lookup[a][b] = total points A earned in all pairings vs B.
+  // Sum scores per pairing.
   const lookup: Record<string, Record<string, number>> = {};
   for (const id of agentIds) {
     lookup[id] = Object.fromEntries(agentIds.map((other) => [other, 0]));
@@ -139,17 +170,29 @@ function renderHeatmap(state: GameState, agentIds: string[], container: HTMLElem
     lookup[r.agentId][r.opponentId] += r.score;
   }
 
+  // Find the global max across all non-diagonal cells for heat-scaling.
+  const allScores = agentIds.flatMap((a) =>
+    agentIds.filter((b) => b !== a).map((b) => lookup[a][b]),
+  );
+  const maxScore = Math.max(1, ...allScores);
+
   const colHeaders = agentIds.map((id) => `<th>${id}</th>`).join("");
+
   const rows = agentIds
     .map((a) => {
+      const color = agentColor(a);
       const cells = agentIds
-        .map((b) =>
-          a === b
-            ? `<td class="heatmap-self">—</td>`
-            : `<td class="heatmap-cell">${lookup[a][b]}</td>`,
-        )
+        .map((b) => {
+          if (a === b) return `<td class="heatmap-self">—</td>`;
+          const score = lookup[a][b];
+          // Alpha 0 → 0.65: low scorer is transparent, top scorer is clearly tinted.
+          const alpha = ((score / maxScore) * 0.65).toFixed(2);
+          const bg = `rgba(${color.rgb},${alpha})`;
+          return `<td class="heatmap-cell" style="background:${bg}">${score}</td>`;
+        })
         .join("");
-      return `<tr><th class="heatmap-row-header">${a}</th>${cells}</tr>`;
+      // Row header takes the row agent's color so you can scan by personality.
+      return `<tr><th class="heatmap-row-header" style="color:${color.hex}">${a}</th>${cells}</tr>`;
     })
     .join("");
 

@@ -82,8 +82,10 @@ async function main(): Promise<void> {
 
   await client.load((pct) => {
     ui.setStatus(`Loading model… ${pct}%`);
-    if (pct % 20 === 0) ui.appendLog(`  ${pct}%`);
+    ui.setProgress(pct);
+    if (pct > 0 && pct % 20 === 0) ui.appendLog(`  ${pct}%`);
   });
+  ui.setProgress(100); // hide the loading bar
 
   ui.setStatus("Model ready. Starting match…");
   ui.appendLog("Model ready.\n");
