@@ -12,7 +12,7 @@ New to WebGPU and this inference stack; doing this project to deepen AI/systems 
 - Target browser: Edge only. Firefox has WebGPU disabled.
 - Dev server: `npm run dev` (port 5173). COOP + COEP headers active locally.
 - GitHub repo: https://github.com/viribusegovis/llm-arena (public, MIT)
-- Cloudflare Pages deploy: https://llm-arena.bmsffreitas1.workers.dev (Wrangler-based)
+- Cloudflare Pages deploy: https://llm-arena.viribus.workers.dev (Wrangler-based)
 
 ## Repo state
 
