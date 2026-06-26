@@ -60,6 +60,58 @@ export function initLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
       <h2>Log</h2>
       <pre id="log" class="log"></pre>
     </section>
+
+    <section class="panel" id="explainer">
+      <h2>How it works</h2>
+      <div class="explainer-body">
+        <p class="explainer-p">
+          Four instances of the same tiny language model
+          (<a class="explainer-link" href="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF" target="_blank">Qwen3.5-0.8B</a>,
+          ~510&nbsp;MB, 4-bit quantized) run entirely in your browser using WebGPU for GPU acceleration.
+          Each instance is given a different <em>personality</em> via its system prompt and plays
+          <strong>Iterated Prisoner&rsquo;s Dilemma</strong> against every other agent for 10 rounds.
+          No server, no API, no token bill.
+        </p>
+
+        <p class="explainer-subhead">The Prisoner&rsquo;s Dilemma</p>
+        <p class="explainer-p">
+          Each round, two agents independently choose to <strong>cooperate</strong> or <strong>defect</strong>
+          &mdash; without knowing what the other will pick. Payoffs:
+        </p>
+        <pre class="explainer-matrix">
+               Opponent cooperates   Opponent defects
+  You cooperate      +3 / +3              +0 / +5
+  You defect         +5 / +0              +1 / +1</pre>
+        <p class="explainer-p">
+          Mutual cooperation pays well for everyone. Defecting against a cooperator is the greedy
+          play &mdash; you get 5 but they get nothing. Mutual defection is the worst collective
+          outcome: both get only 1. The tension is that defecting is <em>individually</em> rational
+          in a single game, but cooperation beats it over repeated rounds against the right partner.
+        </p>
+
+        <p class="explainer-subhead">The agents</p>
+        <ul class="explainer-agents">
+          <li><span class="agent-chip" style="color:#5bb8f5">tit-for-tat</span> &mdash; cooperates on the first move, then mirrors whatever the opponent did last round. The classic Axelrod winner.</li>
+          <li><span class="agent-chip" style="color:#f55b5b">always-defect</span> &mdash; defects every single round regardless of context. Exploits cooperators; draws against other defectors.</li>
+          <li><span class="agent-chip" style="color:#6ee77a">always-cooperate</span> &mdash; cooperates unconditionally. Maximises mutual gains but is easily exploited.</li>
+          <li><span class="agent-chip" style="color:#f5a623">grudger</span> &mdash; cooperates until the opponent defects once, then defects forever. Patient but unforgiving.</li>
+        </ul>
+
+        <p class="explainer-subhead">What you&rsquo;re watching</p>
+        <p class="explainer-p">
+          On first load the model downloads and is cached in your browser&rsquo;s storage (OPFS);
+          subsequent visits skip the download. Once loaded, the match runs automatically.
+          The streaming box shows each agent&rsquo;s raw token output as the model generates it &mdash;
+          the referee extracts the move word and discards the rest.
+          Agents run one at a time because the model is a single shared instance; turns appear
+          sequentially as each agent &ldquo;thinks.&rdquo;
+        </p>
+        <p class="explainer-p">
+          The <strong>head-to-head grid</strong> shows cumulative points agent A (row) earned
+          against agent B (column). Brighter cells = more points extracted from that matchup.
+        </p>
+      </div>
+    </section>
   `;
 
   const statusEl       = root.querySelector<HTMLElement>("#status")!;
