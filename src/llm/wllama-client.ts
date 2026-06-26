@@ -5,12 +5,14 @@ import type { ChatCompletionChunk } from "@wllama/wllama";
 // runs the neural network math.
 import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 
-// The quantized model we're loading. "Quantized" means the model's weights (numbers
+// Direct download URL for the model file. "Quantized" means the model's weights (numbers
 // that encode what the model has learned) have been compressed from 32-bit floats to
-// ~4 bits each, shrinking the file from ~3 GB to ~500 MB at the cost of slight quality loss.
-const MODEL_REPO = "unsloth/Qwen3.5-0.8B-GGUF";
-// Q4_K_M does not exist in this repo; Q4_1 is the closest 4-bit equivalent (~500 MB).
-const MODEL_FILE = "Qwen3.5-0.8B-Q4_1.gguf";
+// ~4 bits each, shrinking the file from ~1.5 GB to ~500 MB at the cost of slight quality loss.
+// Using a direct URL (rather than loadModelFromHF) avoids the HuggingFace listing API call,
+// which requires a CORS preflight that HuggingFace does not support — causing 404 errors in
+// browsers running under Cross-Origin-Embedder-Policy (required for WebAssembly threading).
+const MODEL_URL =
+  "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_1.gguf";
 
 // A message in a conversation, matching the OpenAI chat format wllama expects.
 // "system" = hidden setup instructions (personality), "user" = the human turn,
@@ -33,8 +35,8 @@ export class WllamaClient {
   // is a browser storage API that wllama uses automatically — no setup needed.
   // onProgress receives 0–100 so the UI can show a progress bar.
   async load(onProgress: (pct: number) => void): Promise<void> {
-    await this.wllama.loadModelFromHF(
-      { repo: MODEL_REPO, file: MODEL_FILE },
+    await this.wllama.loadModelFromUrl(
+      MODEL_URL,
       {
         // n_ctx: how many tokens (word-pieces) of conversation history the model keeps
         // in memory at once. 2048 is plenty for this game's short prompts.
