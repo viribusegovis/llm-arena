@@ -50,12 +50,18 @@ export default {
 
       const hfResponse = await fetch(MODEL_HF_URL, { headers: proxyHeaders });
 
-      // Pass HF's response through including etag, which wllama uses as the
-      // freshness key for its OPFS (browser storage) cache.
+      // HF's XET CDN streams responses without Content-Length (chunked transfer encoding).
+      // Without it, wllama's progress callback always gets total=0 and shows 0% forever.
+      // Add it explicitly so loaded/total gives a real percentage.
+      const responseHeaders = new Headers(hfResponse.headers);
+      if (!responseHeaders.get("content-length")) {
+        responseHeaders.set("content-length", String(MODEL_SIZE_BYTES));
+      }
+
       return new Response(hfResponse.body, {
         status: hfResponse.status,
         statusText: hfResponse.statusText,
-        headers: hfResponse.headers,
+        headers: responseHeaders,
       });
     }
 
