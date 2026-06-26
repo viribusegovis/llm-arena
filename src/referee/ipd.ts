@@ -48,10 +48,26 @@ export function createInitialState(agentIds: string[]): GameState {
   };
 }
 
+// Callbacks the caller can attach to observe each decision as it happens.
+// All fields are optional — pass only what you need.
+export interface RoundCallbacks {
+  // Fires just before an agent decides, so the UI can clear the streaming display and
+  // label it with the right agent name.
+  beforeDecide?: (agentId: string, opponentId: string) => void;
+  // Fires once per generated text fragment during streaming inference.
+  // agentId/opponentId tell the UI which pairing is in progress.
+  onToken?: (agentId: string, opponentId: string, fragment: string) => void;
+}
+
 // Runs one full round of round-robin play: every agent pair plays exactly once.
 // With N agents there are N*(N-1)/2 pairings per round.
 // Returns the updated GameState (immutable — the input state is never mutated).
-export async function runRound(agents: Agent[], state: GameState): Promise<GameState> {
+// callbacks is optional; omit it for non-UI contexts (tests, scripts).
+export async function runRound(
+  agents: Agent[],
+  state: GameState,
+  callbacks?: RoundCallbacks,
+): Promise<GameState> {
   // Work on copies so the input state is untouched.
   const results = [...state.results];
   const scores = { ...state.scores };
@@ -64,8 +80,16 @@ export async function runRound(agents: Agent[], state: GameState): Promise<GameS
       // Sequential, not concurrent. wllama holds one loaded model and can only run one
       // inference at a time — concurrent calls on the same client return null and crash.
       // RandomAgent resolves instantly so the sequencing cost is negligible.
-      const moveA = await a.decide(buildAgentView(results, a.id, b.id));
-      const moveB = await b.decide(buildAgentView(results, b.id, a.id));
+      callbacks?.beforeDecide?.(a.id, b.id);
+      const moveA = await a.decide(
+        buildAgentView(results, a.id, b.id),
+        callbacks?.onToken ? (f) => callbacks.onToken!(a.id, b.id, f) : undefined,
+      );
+      callbacks?.beforeDecide?.(b.id, a.id);
+      const moveB = await b.decide(
+        buildAgentView(results, b.id, a.id),
+        callbacks?.onToken ? (f) => callbacks.onToken!(b.id, a.id, f) : undefined,
+      );
 
       // Validate — an LLM agent could return garbage. Default to defect (safe, penalises
       // the broken agent without crashing the game).

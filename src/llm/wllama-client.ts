@@ -1,4 +1,5 @@
 import { Wllama } from "@wllama/wllama";
+import type { ChatCompletionChunk } from "@wllama/wllama";
 // Vite's `?url` import gives us the path to the compiled WASM binary at build time.
 // The WASM file contains the actual inference engine — the compiled C++ code that
 // runs the neural network math.
@@ -55,7 +56,44 @@ export class WllamaClient {
   // Each call is stateless — the full conversation history must be passed every time.
   // maxTokens caps how long the reply can be (1 token ≈ 1 word or punctuation mark).
   // temperature controls randomness: 0 = deterministic, 1 = very random. 0.5 is balanced.
-  async complete(messages: ChatMessage[], maxTokens = 16, temperature = 0.5): Promise<string> {
+  //
+  // onToken: if provided, the model streams its output. The callback fires once per
+  // text fragment (typically one or a few characters). When streaming, wllama's API
+  // returns Promise<void> instead of the response, so we collect text inside the callback.
+  async complete(
+    messages: ChatMessage[],
+    maxTokens = 16,
+    temperature = 0.5,
+    onToken?: (fragment: string) => void,
+  ): Promise<string> {
+    if (onToken) {
+      // Streaming mode: wllama fires onData once per generated token fragment.
+      // We accumulate the fragments ourselves and return the full text at the end.
+      let collected = "";
+      await this.wllama.createChatCompletion({
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        chat_template_kwargs: { enable_thinking: false },
+        // stream: true switches wllama from returning a single response to calling onData
+        // repeatedly as tokens are generated, then resolving the promise when done.
+        stream: true,
+        onData: (chunk: ChatCompletionChunk) => {
+          // delta.content is the new text fragment for this token; null at stream end.
+          const fragment = chunk.choices[0].delta.content ?? "";
+          if (fragment) {
+            collected += fragment;
+            onToken(fragment);
+          }
+        },
+      });
+      // If nothing was collected, the model returned empty content — same failure mode as
+      // a null response in non-streaming mode. Throw so the retry logic can handle it.
+      if (!collected) throw new Error("wllama streaming returned no content");
+      return collected;
+    }
+
+    // Non-streaming mode: returns the full response in one shot.
     const response = await this.wllama.createChatCompletion({
       messages,
       max_tokens: maxTokens,

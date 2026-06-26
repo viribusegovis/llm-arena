@@ -2,6 +2,7 @@ import { LLMAgent } from "../agents/llm-agent";
 import { WllamaClient } from "../llm/wllama-client";
 import { createInitialState, runRound } from "../referee/ipd";
 import type { GameState, Move } from "../referee/types";
+import { initLayout } from "./render";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -26,13 +27,6 @@ for (const level of ["log", "warn", "error", "debug"] as const) {
     if (LOG_SKIP.some((re) => re.test(line))) return;
     fetch("/__log", { method: "POST", body: line }).catch(() => {});
   };
-}
-
-// --- UI helpers ------------------------------------------------------------------
-
-function log(line: string): void {
-  app.append(line, document.createElement("br"));
-  console.log(line);
 }
 
 // --- Personalities ---------------------------------------------------------------
@@ -74,59 +68,89 @@ const ROUNDS = 10;
 // --- Entry point -----------------------------------------------------------------
 
 async function main(): Promise<void> {
-  log("=== LLM Arena — Phase 1c: all-LLM match ===");
+  const agentIds = Object.keys(PERSONALITIES);
+
+  // Build the DOM layout and get back the control object for updating it.
+  const ui = initLayout(app, agentIds);
+  ui.appendLog("=== LLM Arena — Phase 1d: minimal UI ===");
 
   // All four agents share one loaded model instance. Loading once and reusing is
   // essential — each load would re-download/re-initialize ~500 MB.
   const client = new WllamaClient();
-  log("Loading model…");
+  ui.setStatus("Loading model…");
+  ui.appendLog("Loading model…");
+
   await client.load((pct) => {
-    if (pct % 20 === 0) log(`  ${pct}%`);
+    ui.setStatus(`Loading model… ${pct}%`);
+    if (pct % 20 === 0) ui.appendLog(`  ${pct}%`);
   });
-  log("Model ready.\n");
+
+  ui.setStatus("Model ready. Starting match…");
+  ui.appendLog("Model ready.\n");
 
   const agents = Object.entries(PERSONALITIES).map(
-    ([id, prompt]) => new LLMAgent(id, prompt, client)
+    ([id, prompt]) => new LLMAgent(id, prompt, client),
   );
 
-  log(`Agents: ${agents.map((a) => a.id).join(", ")}`);
-  log(`${ROUNDS} rounds, round-robin (each pair plays every round)\n`);
+  ui.appendLog(`Agents: ${agentIds.join(", ")}`);
+  ui.appendLog(`${ROUNDS} rounds, round-robin\n`);
 
-  let state: GameState = createInitialState(agents.map((a) => a.id));
+  let state: GameState = createInitialState(agentIds);
 
   for (let round = 1; round <= ROUNDS; round++) {
-    state = await runRound(agents, state);
-    log(`Round ${round}: ${formatScores(state)}`);
+    ui.setStatus(`Round ${round} / ${ROUNDS}`);
+    ui.appendLog(`--- Round ${round} ---`);
+
+    state = await runRound(agents, state, {
+      // beforeDecide fires just before each agent's inference call.
+      // We use it to clear the streaming box and label it with the deciding agent.
+      beforeDecide(agentId, opponentId) {
+        ui.setStatus(`Round ${round} / ${ROUNDS} — ${agentId} deciding vs ${opponentId}`);
+        ui.setStreamingAgent(agentId);
+      },
+      // onToken fires once per generated text fragment (roughly one or a few characters).
+      // We pipe it straight into the streaming display so the text appears to "type itself".
+      onToken(_agentId, _opponentId, fragment) {
+        ui.appendStreamToken(fragment);
+      },
+    });
+
+    // Round complete: update score bars and head-to-head grid, then log the summary.
+    ui.updateScores(state);
+    ui.updateHeatmap(state);
+    ui.appendLog(`  Scores: ${formatScores(state)}`);
   }
 
-  log("\n=== Final scores ===");
-  for (const [id, score] of Object.entries(state.scores).sort((a, b) => b[1] - a[1])) {
-    log(`  ${id}: ${score} pts`);
+  // Match over: update status and log final breakdown.
+  ui.setStatus("Match complete!");
+  ui.appendLog("\n=== Final scores ===");
+  for (const [id, score] of Object.entries(state.scores).sort(([, a], [, b]) => b - a)) {
+    ui.appendLog(`  ${id}: ${score} pts`);
   }
 
   // Per-agent cooperation rate: what fraction of moves were "cooperate"?
   // This reveals whether the personality actually shaped behavior.
-  log("\n=== Cooperation rates ===");
+  ui.appendLog("\n=== Cooperation rates ===");
   for (const agent of agents) {
     const ownResults = state.results.filter((r) => r.agentId === agent.id);
     const cooperated = ownResults.filter((r) => r.move === "cooperate").length;
-    log(`  ${agent.id}: ${cooperated}/${ownResults.length} cooperated (${pct(cooperated, ownResults.length)}%)`);
+    ui.appendLog(
+      `  ${agent.id}: ${cooperated}/${ownResults.length} cooperated (${pct(cooperated, ownResults.length)}%)`,
+    );
   }
 
   // Head-to-head breakdown: for each pairing, show both sides' move sequences.
-  // This is where personality differences become visible.
-  log("\n=== Head-to-head move sequences ===");
-  const ids = agents.map((a) => a.id);
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const a = ids[i], b = ids[j];
+  ui.appendLog("\n=== Head-to-head move sequences ===");
+  for (let i = 0; i < agentIds.length; i++) {
+    for (let j = i + 1; j < agentIds.length; j++) {
+      const a = agentIds[i], b = agentIds[j];
       const aMoves = movesFor(state, a, b);
       const bMoves = movesFor(state, b, a);
       const aScore = state.results.filter((r) => r.agentId === a && r.opponentId === b).reduce((s, r) => s + r.score, 0);
       const bScore = state.results.filter((r) => r.agentId === b && r.opponentId === a).reduce((s, r) => s + r.score, 0);
-      log(`  ${a} vs ${b}`);
-      log(`    ${a}: ${aMoves.join(" ")} → ${aScore} pts`);
-      log(`    ${b}: ${bMoves.join(" ")} → ${bScore} pts`);
+      ui.appendLog(`  ${a} vs ${b}`);
+      ui.appendLog(`    ${a}: ${aMoves.join(" ")} → ${aScore} pts`);
+      ui.appendLog(`    ${b}: ${bMoves.join(" ")} → ${bScore} pts`);
     }
   }
 }
@@ -150,5 +174,5 @@ function pct(n: number, total: number): string {
 
 main().catch((err) => {
   console.error(err);
-  log(`ERROR: ${err instanceof Error ? err.message : String(err)}`);
+  app.innerHTML += `<p style="color:red">ERROR: ${err instanceof Error ? err.message : String(err)}</p>`;
 });

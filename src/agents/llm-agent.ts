@@ -49,14 +49,17 @@ export class LLMAgent implements Agent {
     private readonly client: WllamaClient,
   ) {}
 
-  async decide(view: AgentView): Promise<Move> {
+  // onToken: optional streaming callback forwarded to the model on the first attempt.
+  // Retries are silent (no streaming) — we don't want the UI to show a second stream
+  // of tokens if the first attempt gave an unparseable response.
+  async decide(view: AgentView, onToken?: (fragment: string) => void): Promise<Move> {
     const messages = [
       { role: "system" as const, content: this.systemPrompt },
       { role: "user" as const, content: buildUserMessage(view) },
     ];
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const text = await this.client.complete(messages);
+      const text = await this.client.complete(messages, undefined, undefined, attempt === 0 ? onToken : undefined);
       const move = parseMoveFromText(text);
       if (move !== null) return move;
       // Model returned something unparseable — loop back and try again.

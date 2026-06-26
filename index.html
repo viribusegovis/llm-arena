@@ -4,6 +4,122 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LLM Arena</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: "Consolas", "Menlo", monospace;
+        background: #0d0f12;
+        color: #c9cdd4;
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      h1 { color: #ffffff; font-size: 1.4rem; margin-bottom: 0.75rem; letter-spacing: 0.03em; }
+      h2 { color: #8892a4; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.6rem; }
+
+      .panel { margin-top: 1.75rem; }
+
+      /* Status line ---------------------------------------------------------------- */
+      .status { color: #5bb8f5; font-size: 0.9rem; margin-bottom: 0.5rem; min-height: 1.2em; }
+
+      /* Streaming box — the model "typing" its move in real time ------------------- */
+      .stream-box {
+        background: #131820;
+        border: 1px solid #2a3040;
+        border-radius: 5px;
+        padding: 0.5rem 0.9rem;
+        min-height: 2.2rem;
+        font-size: 0.9rem;
+        margin-bottom: 0.25rem;
+      }
+      .stream-agent { color: #f5a623; font-weight: bold; }
+      .stream-arrow { color: #555; }
+      /* Blinking cursor appended after the streamed text */
+      .stream-output { color: #6ee77a; }
+      .stream-output::after { content: "▌"; animation: blink 0.8s step-end infinite; color: #6ee77a; }
+      @keyframes blink { 50% { opacity: 0; } }
+
+      /* Score bars ----------------------------------------------------------------- */
+      .bar-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 0.35rem;
+      }
+      .bar-label {
+        width: 130px;
+        text-align: right;
+        font-size: 0.82rem;
+        color: #a8b0be;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 0;
+      }
+      .bar-track {
+        flex: 1;
+        background: #1c2130;
+        border-radius: 3px;
+        height: 16px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #2563d4 0%, #5bb8f5 100%);
+        border-radius: 3px;
+        transition: width 0.35s ease;
+        min-width: 2px; /* always show a sliver even at 0 */
+      }
+      .bar-score {
+        width: 36px;
+        text-align: right;
+        font-size: 0.82rem;
+        color: #f5a623;
+        flex-shrink: 0;
+      }
+
+      /* Head-to-head heatmap ------------------------------------------------------- */
+      .heatmap-table {
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+      .heatmap-table th {
+        padding: 4px 10px;
+        color: #6a7487;
+        font-weight: normal;
+        text-align: center;
+      }
+      .heatmap-row-header {
+        text-align: right !important;
+        padding-right: 12px !important;
+        color: #a8b0be !important;
+      }
+      .heatmap-table td {
+        padding: 4px 14px;
+        text-align: center;
+        border: 1px solid #1c2130;
+      }
+      .heatmap-self  { color: #2a3040; }
+      .heatmap-cell  { color: #c9cdd4; }
+      .dim { color: #3a4255; font-style: italic; font-size: 0.82rem; }
+
+      /* Scrolling text log --------------------------------------------------------- */
+      .log {
+        background: #0a0c10;
+        border: 1px solid #1c2130;
+        border-radius: 4px;
+        padding: 0.75rem 0.9rem;
+        max-height: 280px;
+        overflow-y: auto;
+        font-size: 0.75rem;
+        color: #6a7487;
+        white-space: pre-wrap;
+        word-break: break-all;
+        line-height: 1.5;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
