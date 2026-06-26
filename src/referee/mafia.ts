@@ -312,6 +312,9 @@ async function stepNight(
     callbacks?.beforeDecide?.(agent.id);
     const view = buildAgentView(state, agent.id);
     const move = await agent.decide(view);
+    // Check for tab switch / cancellation immediately after inference returns.
+    // This limits cancellation latency to one inference call instead of one full phase.
+    if (callbacks?.shouldStop?.()) throw new GameCancelledError();
 
     if (move.kind === "kill" && isValidMove(state, agent.id, move)) {
       nightActions.killTarget = move.target;
@@ -407,6 +410,7 @@ async function stepDayDiscuss(
       view,
       callbacks?.onToken ? (f) => callbacks.onToken!(agent.id, f) : undefined,
     );
+    if (callbacks?.shouldStop?.()) throw new GameCancelledError();
 
     if (move.kind === "speak" && move.text.trim().length > 0) {
       transcript = [...transcript, { round: state.round, playerId: agent.id, text: move.text }];
@@ -431,6 +435,7 @@ async function stepDayVote(
     callbacks?.beforeDecide?.(agent.id);
     const view = buildAgentView(state, agent.id);
     const move = await agent.decide(view);
+    if (callbacks?.shouldStop?.()) throw new GameCancelledError();
 
     if (move.kind === "vote" && isValidMove(state, agent.id, move)) {
       votes[agent.id] = move.target;
@@ -507,6 +512,15 @@ export interface MafiaCallbacks {
   beforeDecide?: (agentId: string) => void;
   // Fires once per streamed text fragment during day-discuss speak moves.
   onToken?: (agentId: string, fragment: string) => void;
+  // If provided, checked after each agent decides. Return true to abort the phase early.
+  // Caller catches the thrown GameCancelledError to exit the game runner cleanly.
+  shouldStop?: () => boolean;
+}
+
+// Thrown by stepPhase when shouldStop() returns true mid-phase.
+// Callers that support cancellation should catch this and exit silently.
+export class GameCancelledError extends Error {
+  constructor() { super("GAME_CANCELLED"); }
 }
 
 // Advances the game by one full phase and returns the new state.

@@ -2,7 +2,7 @@ import { LLMAgent } from "../agents/llm-agent";
 import { MafiaLLMAgent } from "../agents/mafia-llm-agent";
 import { WllamaClient } from "../llm/wllama-client";
 import { createInitialState as ipdCreateInitial, runRound } from "../referee/ipd";
-import { createInitialState as mafiaCreateInitial, stepPhase } from "../referee/mafia";
+import { createInitialState as mafiaCreateInitial, stepPhase, GameCancelledError } from "../referee/mafia";
 import type { MafiaGameState, Role } from "../referee/mafia";
 import type { GameState } from "../referee/types";
 import { initIPDLayout, initMafiaLayout } from "./render";
@@ -270,18 +270,24 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
       ui.appendLog(`── Round ${round}: Day — Vote ───────────────────`);
     }
 
-    state = await stepPhase(agents, state, {
-      beforeDecide(agentId) {
-        const label =
-          phase === "night"       ? "Night"    :
-          phase === "day-discuss" ? "Speaking" : "Voting";
-        ui.setStatus(`Round ${round} · ${label} · ${agentId} is deciding…`);
-        if (phase === "day-discuss") ui.setStreamingAgent(agentId);
-      },
-      onToken(_agentId, fragment) {
-        ui.appendStreamToken(fragment);
-      },
-    });
+    try {
+      state = await stepPhase(agents, state, {
+        shouldStop: isCancelled,
+        beforeDecide(agentId) {
+          const label =
+            phase === "night"       ? "Night"    :
+            phase === "day-discuss" ? "Speaking" : "Voting";
+          ui.setStatus(`Round ${round} · ${label} · ${agentId} is deciding…`);
+          if (phase === "day-discuss") ui.setStreamingAgent(agentId);
+        },
+        onToken(_agentId, fragment) {
+          ui.appendStreamToken(fragment);
+        },
+      });
+    } catch (e) {
+      if (e instanceof GameCancelledError) return;
+      throw e;
+    }
 
     const newElim           = state.eliminated.slice(prevEliminatedLen);
     const newTranscript     = state.transcript.slice(prevTranscriptLen);

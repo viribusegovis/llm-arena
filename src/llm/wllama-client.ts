@@ -32,6 +32,21 @@ export type ChatMessage = { role: "system" | "user" | "assistant"; content: stri
 export class WllamaClient {
   private readonly wllama: Wllama;
 
+  // wllama does not support concurrent inference — a second call while one is running
+  // returns null, which causes spurious retries and errors. This queue ensures calls
+  // are serialised: each one waits for the previous to finish before starting.
+  // When the user switches tabs, the new game's first inference call queues behind the
+  // old game's current call, then the old runner exits (isCancelled), giving the new
+  // game a clean slot. Errors in one call do not poison the queue for subsequent calls.
+  private inferenceQueue: Promise<void> = Promise.resolve();
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.inferenceQueue.then(fn);
+    // Swallow the error on the chain so a failed inference doesn't block the next one.
+    this.inferenceQueue = result.then(() => {}, () => {});
+    return result;
+  }
+
   constructor() {
     // Single WASM build covers both single-thread and multi-thread since wllama v3.1.
     this.wllama = new Wllama({ default: wllamaWasmUrl });
@@ -69,6 +84,15 @@ export class WllamaClient {
     );
   }
 
+  // Public entry points — enqueue calls so they never overlap.
+  complete(messages: ChatMessage[], maxTokens = 16, temperature = 0.5, onToken?: (fragment: string) => void): Promise<string> {
+    return this.enqueue(() => this.doComplete(messages, maxTokens, temperature, onToken));
+  }
+
+  completeWithTool(messages: ChatMessage[], tool: ChatCompletionTool, maxTokens = 50, temperature = 0.3): Promise<Record<string, unknown> | null> {
+    return this.enqueue(() => this.doCompleteWithTool(messages, tool, maxTokens, temperature));
+  }
+
   // Runs one inference: sends the message history to the model and returns its reply.
   // Each call is stateless — the full conversation history must be passed every time.
   // maxTokens caps how long the reply can be (1 token ≈ 1 word or punctuation mark).
@@ -77,7 +101,7 @@ export class WllamaClient {
   // onToken: if provided, the model streams its output. The callback fires once per
   // text fragment (typically one or a few characters). When streaming, wllama's API
   // returns Promise<void> instead of the response, so we collect text inside the callback.
-  async complete(
+  private async doComplete(
     messages: ChatMessage[],
     maxTokens = 16,
     temperature = 0.5,
@@ -136,7 +160,7 @@ export class WllamaClient {
   //
   // Returns null (rather than throwing) when the model calls the wrong tool or produces
   // malformed JSON — the caller handles that as a retry or fallback.
-  async completeWithTool(
+  private async doCompleteWithTool(
     messages: ChatMessage[],
     tool: ChatCompletionTool,
     maxTokens = 50,

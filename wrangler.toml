@@ -7,3 +7,9 @@ main = "src/worker.ts"
 directory = "./dist"
 # Binding name used in worker.ts to serve static files for non-/model routes.
 binding = "ASSETS"
+
+# Staging environment: identical config, different worker name.
+# Deploy with: npm run build && wrangler deploy --env staging
+# Lives at: llm-arena-staging.<account>.workers.dev
+[env.staging]
+name = "llm-arena-staging"
