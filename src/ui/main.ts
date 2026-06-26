@@ -20,18 +20,23 @@ fetch("/__log", { method: "POST", body: "__RESET__" })
 const stringifyArg = (a: unknown) =>
   typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })();
 
-// llama.cpp fires "slot update_slots" on every inference call for hybrid/recurrent
-// models like Qwen3.5 (Gated DeltaNet). They carry no useful info — suppress all variants.
-const LOG_SKIP = [/slot update_slots:/];
+// Internal llama.cpp diagnostic messages that fire on every inference call.
+// "slot …" = KV-cache scheduler; "srv …" = prompt save/load state.
+// Both are noise for this project — suppress from the browser console entirely.
+const LOG_SKIP = [/^slot\s/, /^srv\s/];
 
 for (const level of ["log", "warn", "error", "debug"] as const) {
   const original = console[level].bind(console);
   console[level] = (...args: unknown[]) => {
+    const text = args.map(stringifyArg).join(" ");
+    // Check before calling original so suppressed messages never reach DevTools.
+    if (LOG_SKIP.some((re) => re.test(text))) return;
     original(...args);
     if (!loggingEnabled) return;
-    const line = `[${new Date().toISOString()}] ${level.toUpperCase()}: ${args.map(stringifyArg).join(" ")}`;
-    if (LOG_SKIP.some((re) => re.test(line))) return;
-    fetch("/__log", { method: "POST", body: line }).catch(() => {});
+    fetch("/__log", {
+      method: "POST",
+      body: `[${new Date().toISOString()}] ${level.toUpperCase()}: ${text}`,
+    }).catch(() => {});
   };
 }
 
