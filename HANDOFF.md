@@ -1,10 +1,10 @@
-# Session handoff — Phase 1d confirmed working, ready for Phase 2
+# Session handoff — Phase 1 complete, Phase 2 ready to start
 
 Read `llm-arena-build-plan.md` and `CLAUDE.md` first. This file is the volatile "where we left off" doc — update or delete it as work progresses.
 
 ## User context
 
-New to WebGPU and this inference stack; doing this project to deepen AI/systems knowledge. Wants things explained, not just done. Prefers concise answers, no preamble. No em dashes (use hyphens instead).
+New to WebGPU and this inference stack; doing this project to deepen AI/systems knowledge. Wants things explained, not just done. Prefers concise answers, no preamble. No em dashes (use hyphens instead). Using this project for job applications — keep `main` clean and demo-ready at all times.
 
 ## Environment (confirmed)
 
@@ -12,29 +12,38 @@ New to WebGPU and this inference stack; doing this project to deepen AI/systems 
 - Target browser: Edge only. Firefox has WebGPU disabled.
 - Dev server: `npm run dev` (port 5173). COOP + COEP headers active locally.
 - GitHub repo: https://github.com/viribusegovis/llm-arena (public, MIT)
-- Cloudflare Pages deploy: https://llm-arena.viribus.workers.dev (Wrangler-based)
+- Cloudflare Workers deploy: https://llm-arena.viribus.workers.dev (auto-deploys on push to `main` via GitHub Actions)
 
 ## Repo state
 
-- Branch: `main`
-- Clean tree, all committed. Last commit: `f8576ba`
+- Active branch: `feat/phase-2-mafia` (created, no commits yet)
+- `main` is clean and deployed. Last commit on main: `dc635ce`
+- CI/CD: `.github/workflows/deploy.yml` — triggers on push to `main` only. Feature branches do not deploy.
+
+## What was done this session
+
+- README updated with live URL and correct Phase 2 description (Mini-Mafia)
+- GitHub Actions workflow added (`npm ci` + `npm run build` + `wrangler-action@v3`)
+- `package-lock.json` added and committed (was previously gitignored; required for `npm ci`)
+- Node bumped to 24 in the workflow (20 was deprecated)
+- "How it works" explainer section added to the page (below the log): IPD payoff matrix, agent descriptions, what the streaming box and heatmap show
+- Cloudflare workers.dev subdomain changed from `bmsffreitas1` to `viribus`
+- Progress bar fix: Cloudflare Workers strips Content-Length from streamed responses, so `total` arrives as 0 in wllama's progressCallback. Fixed by using the known model size (535_171_328) as fallback so the bar shows a real percentage
 
 ## Phase 1 milestone status
 
-- 1a - 1c: complete (referee, LLM agents, 4 personalities, 10 rounds, all-LLM match)
-- 1d: **confirmed working end-to-end on Cloudflare** this session
+- 1a - 1d: all complete and deployed
 - 21 unit tests passing (`npm test`)
-- README not yet updated with live URL (minor outstanding item)
 
 ## File layout (current)
 
 ```
 index.html                # All CSS inline in <style> block; #app mount point only
 src/
-  worker.ts               # Cloudflare Worker entry: /model.gguf proxy + static assets
+  worker.ts               # Cloudflare Worker: /model.gguf proxy + static assets
   referee/
     types.ts              # Move, GameState, AgentView, RoundResult
-    ipd.ts                # payoffs, runRound (with optional callbacks), createInitialState, isLegalMove
+    ipd.ts                # payoffs, runRound, createInitialState, isLegalMove
     ipd.test.ts           # 21 Vitest tests
   agents/
     agent.ts              # Agent interface
@@ -46,9 +55,10 @@ src/
     main.ts               # Entry point — match runner, dev logger, ArenaUI wiring
     render.ts             # initLayout, renderScoreBars, renderHeatmap -> ArenaUI object
 public/
-  _headers                # Cloudflare Pages: COOP only (COEP removed, see gotchas)
+  _headers                # Cloudflare: COOP only (COEP removed, see gotchas)
 wrangler.toml             # main = src/worker.ts; assets.directory = ./dist; binding = ASSETS
 vite.config.ts            # COOP+COEP headers locally; file-logger plugin; /model.gguf dev proxy
+.github/workflows/deploy.yml  # CI/CD: build + wrangler deploy on push to main
 ```
 
 ## Model
@@ -58,43 +68,35 @@ vite.config.ts            # COOP+COEP headers locally; file-logger plugin; /mode
 - Served via: `/model.gguf` on the same origin (Worker proxies to HuggingFace server-side)
 - MODEL_URL: `${window.location.origin}/model.gguf` (works in both dev and prod)
 
-## Architecture: model proxy (key decision this session)
-
-HuggingFace migrated this repo to XET storage (`us.aws.cdn.hf.co/xet-bridge-us`), which does not send CORS headers on browser GET requests. The old git-LFS CDN did.
-
-Fix: `src/worker.ts` adds a `/model.gguf` route:
-- HEAD - returns synthetic 200 with Content-Length (HF's CDN also lacks CORS on HEAD; wllama needs content-length for progress bar)
-- GET - proxies to HuggingFace server-side (no browser CORS constraints on server-to-server fetch); adds Content-Length if missing (XET streams chunked, no Content-Length, causing wllama to always show 0% progress)
-
-`vite.config.ts` has an identical `/model.gguf` middleware for local dev (Node fetch is also server-side, no CORS). The `window.fetch` HEAD patch from the previous session was removed — no longer needed.
-
 ## Key gotchas (cumulative from all sessions)
 
 1. GPU offload: `n_gpu_layers: -1` required. Already set.
 2. Thinking mode: `enable_thinking: false` required. Already set.
 3. Concurrent inference: crashes wllama. `runRound` calls agents sequentially. Already fixed.
 4. Single-word extraction: 100% valid, ~187ms/run. Already implemented.
-5. OPFS cache: per-origin. `localhost:5173` and Cloudflare are separate caches. First load ~5 min, cached ~2-5s. Changing MODEL_URL invalidates the cache (different cache key).
+5. OPFS cache: per-origin. `localhost:5173` and Cloudflare are separate caches. First load ~5 min, cached ~2-5s.
 6. Firefox: WebGPU disabled. Only test in Edge.
-7. COEP removed from Cloudflare `_headers` — HF's LFS CDN doesn't send `Cross-Origin-Resource-Policy: cross-origin`. wllama falls back to single-thread without COEP (WebGPU still works). Local dev keeps COEP (multithread works there).
-8. wllama URL validation: `loadModelFromUrl` requires the URL to end in `.gguf` — hence `/model.gguf` not `/model`.
-9. wllama `getHFFileSHA256`: only triggers when URL contains `/resolve/`. Our `/model.gguf` URL doesn't, so this code path is skipped. OPFS cache falls back to etag (passed through from HF response headers by the Worker).
-10. HF XET CDN: streams file without Content-Length. Worker adds it explicitly from the known constant so wllama's progress bar works.
-11. llama.cpp console noise: `slot update_slots:` and `srv ` prefix messages fire on every inference call. Suppressed in `LOG_SKIP` before `original()` so they don't appear in DevTools at all.
-12. `/__log` 404 on Cloudflare: health-checked once at startup. If `__RESET__` POST returns ok, logging is enabled; otherwise silenced for the session.
+7. COEP removed from Cloudflare `_headers` — HF's LFS CDN doesn't send `Cross-Origin-Resource-Policy: cross-origin`. wllama falls back to single-thread without COEP (WebGPU still works). Local dev keeps COEP.
+8. wllama URL validation: `loadModelFromUrl` requires the URL to end in `.gguf`.
+9. HF XET CDN: streams file without Content-Length. Worker adds it explicitly, but Cloudflare strips it when proxying a streaming body. Client-side fallback uses the known constant (535_171_328).
+10. llama.cpp console noise: `slot update_slots:` and `srv ` prefix messages suppressed in LOG_SKIP.
+11. `/__log` 404 on Cloudflare: health-checked once at startup; logging silenced for the session if not ok.
+12. Do not use IQ/imatrix quants — excluded in the build plan. 1-bit GGUF quants would likely produce incoherent output at 0.8B.
 
-## UI (Phase 1d final state)
+## What to do next — Phase 2 (Mini-Mafia)
 
-- Agent color palette: tit-for-tat=blue (#5bb8f5), always-defect=red (#f55b5b), always-cooperate=green (#6ee77a), grudger=amber (#f5a623)
-- Colors applied consistently: score bar fills, bar score values, streaming-box left border + agent label, heatmap row headers
-- Animated shimmer progress bar during model loading (hides on completion)
-- Heatmap heat-coded: cell background = row agent's color at opacity proportional to score (0 = transparent, max = 65% opacity)
-- Title with blue glow, section border-left accents
+Branch: `feat/phase-2-mafia` (already checked out, no commits yet)
 
-## What to do next
+**Read `llm-arena-build-plan.md` Phase 2 section before starting.** Key points:
+- 4 players: 1 mafioso, 1 detective, 2 villagers
+- Hidden roles — each agent gets a different AgentView (referee owns all asymmetry)
+- Night phase: mafioso picks a kill target; detective investigates one player
+- Day phase: all players discuss (speak moves), then vote to eliminate one
+- Repeat until mafia wins (equal or outnumber villagers) or villagers win (mafia eliminated)
+- `Move` discriminated union needs `{kind:"vote", target}` and `{kind:"speak", text}` in addition to existing structure
+- Tool calling may earn its place here for structured vote/action moves (vs single-word for IPD)
+- Crib rules from `bastoscostadavi/llm-mafia-game` (verify it still exists)
+- Memory stays referee-owned per agent — do not let the 0.8B model manage its own memory
+- Build the referee with RandomAgent and unit-test completely before touching LLMAgent
 
-1. Update README with the live Cloudflare URL and a short description
-2. Begin Phase 2 (Mini-Mafia) per `llm-arena-build-plan.md`
-   - Key additions: hidden roles, night/day phases, voting, elimination, per-role AgentView asymmetry
-   - The build plan recommends starting from `bastoscostadavi/llm-mafia-game` 4-player Mini-Mafia rules (1 mafioso, 1 detective, 2 villagers)
-   - Tool calling may earn its place here for structured vote/action moves
+**Start with:** new `src/referee/mafia.ts` + `src/referee/mafia.test.ts` — types, state machine, legal moves, win condition. No model, no UI yet.
