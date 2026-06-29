@@ -1,6 +1,6 @@
-# Session handoff — Phase 1 complete, Phase 2 ready to start
+# Session handoff — Phase 2 (Mini-Mafia)
 
-Read `llm-arena-build-plan.md` and `CLAUDE.md` first. This file is the volatile "where we left off" doc — update or delete it as work progresses.
+Read `llm-arena-build-plan.md` and `CLAUDE.md` first. This file is the volatile "where we left off" doc — delete it once the branch is merged.
 
 ## User context
 
@@ -10,93 +10,140 @@ New to WebGPU and this inference stack; doing this project to deepen AI/systems 
 
 - Windows 11, AMD RX 5700 XT (RDNA1, 8GB VRAM), Dx12 backend.
 - Target browser: Edge only. Firefox has WebGPU disabled.
-- Dev server: `npm run dev` (port 5173). COOP + COEP headers active locally.
+- Dev server: `npm run dev` (port 5173).
 - GitHub repo: https://github.com/viribusegovis/llm-arena (public, MIT)
-- Cloudflare Workers deploy: https://llm-arena.viribus.workers.dev (auto-deploys on push to `main` via GitHub Actions)
+- Live prod: https://llm-arena.viribus.workers.dev — auto-deploys on push to `main` via `.github/workflows/deploy.yml`
+- Staging: `llm-arena-staging.<account>.workers.dev` — deploy with `npm run build && npx wrangler deploy --env staging` from this branch, no `main` required
 
 ## Repo state
 
-- Active branch: `feat/phase-2-mafia` (created, no commits yet)
-- `main` is clean and deployed. Last commit on main: `dc635ce`
-- CI/CD: `.github/workflows/deploy.yml` — triggers on push to `main` only. Feature branches do not deploy.
+- Active branch: `feat/phase-2-mafia`
+- Main is clean and running Phase 1 (IPD only). DO NOT push there until staging is confirmed good.
+- Recent commits on this branch:
+  - `29b6ed7` feat(infra): serial inference queue, per-agent cancellation, staging env
+  - `ef027f5` feat(mafia): add mini-mafia game with LLM agents
+- 102 tests passing (`npx vitest run`), TypeScript clean (`npx tsc --noEmit`)
 
-## What was done this session
+## Phase 2 status — code complete, browser testing in progress
 
-- README updated with live URL and correct Phase 2 description (Mini-Mafia)
-- GitHub Actions workflow added (`npm ci` + `npm run build` + `wrangler-action@v3`)
-- `package-lock.json` added and committed (was previously gitignored; required for `npm ci`)
-- Node bumped to 24 in the workflow (20 was deprecated)
-- "How it works" explainer section added to the page (below the log): IPD payoff matrix, agent descriptions, what the streaming box and heatmap show
-- Cloudflare workers.dev subdomain changed from `bmsffreitas1` to `viribus`
-- Progress bar fix: Cloudflare Workers strips Content-Length from streamed responses, so `total` arrives as 0 in wllama's progressCallback. Fixed by using the known model size (535_171_328) as fallback so the bar shows a real percentage
+Everything is implemented and committed. The staging Cloudflare env was just set up. The user was in the process of deploying to staging when the session ended.
 
-## Phase 1 milestone status
+### What's built
 
-- 1a - 1d: all complete and deployed
-- 21 unit tests passing (`npm test`)
+**Game engine (`src/referee/mafia.ts`):**
+- Roles: mafioso, detective, medic, villager
+- 8 players: 1 mafioso, 1 detective, 1 medic, 5 villagers
+- Phases: night → day-discuss → day-vote, repeating until win condition
+- Medic protection: if protect target === kill target, kill is blocked
+- `GameCancelledError` thrown mid-phase if `callbacks.shouldStop()` returns true
+- 102 unit tests total (85 IPD + 17 new Mafia)
+
+**Agents:**
+- `MafiaLLMAgent`: tool calling for night/vote, streaming free-text for day-discuss
+  - Strips `<think>` tags and markdown from output
+  - Truncates speak output to first sentence
+  - Multiple-choice question format: `"Who do you distrust most — A, B, C, D?"`
+  - 3 retries then random fallback on tool failures
+- `MafiaRandomAgent`: picks uniformly from legal moves (used in tests)
+
+**UI (`src/ui/main.ts`, `src/ui/render.ts`, `index.html`):**
+- Tab switcher: Mini-Mafia / Prisoner's Dilemma on one page; model loads once
+- `gameId` cancellation: switching tabs increments gameId; runners exit at `shouldStop` check
+- `GameCancelledError` caught in runner loop, exits silently
+- Serial inference queue in `WllamaClient`: only one `complete()` runs at a time — prevents wllama's null return on concurrent calls
+- Random role assignment each game via `assignRoles()` (8 shuffled personalities → roles)
+- Inline streaming quotes: each player row has a `.player-quote` div that streams their day-discuss speech; quotes persist across re-renders via `quotes: Record<string, string>` map
+- Short status line at top only (no separate stream box for Mafia)
+- God-mode private log: detective findings and medic protections shown to viewer
+- Win banner on game end
+
+**Deployment (`wrangler.toml`):**
+```
+[env.staging]
+name = "llm-arena-staging"
+```
+Deploy: `npm run build && npx wrangler deploy --env staging`
+
+## Known speech quality issues (not a blocker, but worth noting)
+
+The 0.8B model's day-discuss output is imperfect. Observed issues across iterations:
+- Agents sometimes say "I don't trust the person who..." instead of naming someone
+- Occasional markdown leakage (`**name**`) — stripped per-fragment now, mostly fixed
+- Agents sometimes echo the previous speaker's exact words
+- Very rarely: `</think>` tag leaks through despite filtering
+
+What's been tried (all in the current code):
+- Multiple-choice question format forces picking from the name list
+- Only last 1 transcript entry shown (was 3 — caused echoing)
+- `firstSentence()` truncates rambling at first `.!?`
+- `stripMarkdown()` on final text; `*` stripped per streaming fragment
+- Positive-only role instructions (removed "NEVER say..." — it backfired)
+- Short single-rule `SPEAK_RULES` (longer = worse for tiny models)
+
+The game is still fun and functional even with imperfect speech. Further improvement would require either a larger model or more aggressive post-processing (e.g. extract player name, reconstruct sentence).
+
+## What to do next
+
+1. **Verify staging looks correct in Edge** — run `npm run build && npx wrangler deploy --env staging`, open staging URL, check:
+   - Model loads, both tabs work
+   - Mafia game runs multiple rounds
+   - Inline quotes stream under player names
+   - Tab switch mid-game exits cleanly (no console errors)
+   - IPD tab still works
+
+2. **Merge to main and deploy production** once staging is confirmed:
+   ```
+   git checkout main
+   git merge feat/phase-2-mafia
+   git push   # triggers GitHub Actions auto-deploy
+   ```
+   OR manually: `npm run build && npx wrangler deploy`
+
+3. **Delete this file** after merging.
 
 ## File layout (current)
 
 ```
-index.html                # All CSS inline in <style> block; #app mount point only
+index.html                # CSS for both IPD and Mafia; tab bar; #app mount
 src/
   worker.ts               # Cloudflare Worker: /model.gguf proxy + static assets
   referee/
-    types.ts              # Move, GameState, AgentView, RoundResult
-    ipd.ts                # payoffs, runRound, createInitialState, isLegalMove
-    ipd.test.ts           # 21 Vitest tests
+    types.ts              # IPD types
+    ipd.ts                # IPD engine
+    ipd.test.ts           # 85 IPD tests
+    mafia.ts              # Mafia engine + GameCancelledError
+    mafia.test.ts         # 17 Mafia tests (102 total)
   agents/
-    agent.ts              # Agent interface
-    random-agent.ts       # RandomAgent
-    llm-agent.ts          # LLMAgent — streams on first attempt only
+    agent.ts              # IPD Agent interface
+    random-agent.ts       # IPD RandomAgent
+    llm-agent.ts          # IPD LLMAgent
+    mafia-random-agent.ts # MafiaRandomAgent
+    mafia-llm-agent.ts    # MafiaLLMAgent (tool calling + streaming speak + cleanup)
   llm/
-    wllama-client.ts      # WllamaClient — load, complete (streaming + non-streaming)
+    wllama-client.ts      # WllamaClient: load, complete (queued), completeWithTool (queued)
   ui/
-    main.ts               # Entry point — match runner, dev logger, ArenaUI wiring
-    render.ts             # initLayout, renderScoreBars, renderHeatmap -> ArenaUI object
+    main.ts               # Tab switcher + both game runners (Mafia + IPD)
+    render.ts             # initMafiaLayout + initIPDLayout + shared AGENT_COLORS
 public/
-  _headers                # Cloudflare: COOP only (COEP removed, see gotchas)
-wrangler.toml             # main = src/worker.ts; assets.directory = ./dist; binding = ASSETS
-vite.config.ts            # COOP+COEP headers locally; file-logger plugin; /model.gguf dev proxy
-.github/workflows/deploy.yml  # CI/CD: build + wrangler deploy on push to main
+  _headers                # Cloudflare: COOP only (no COEP — needed for HF CDN)
+wrangler.toml             # prod (llm-arena) + staging (llm-arena-staging) envs
+vite.config.ts
+.github/workflows/deploy.yml   # auto-deploys main to prod
 ```
 
-## Model
+## Key gotchas (cumulative)
 
-- Repo: `unsloth/Qwen3.5-0.8B-GGUF`
-- File: `Qwen3.5-0.8B-Q4_1.gguf` (535,171,328 bytes, ~510 MB)
-- Served via: `/model.gguf` on the same origin (Worker proxies to HuggingFace server-side)
-- MODEL_URL: `${window.location.origin}/model.gguf` (works in both dev and prod)
-
-## Key gotchas (cumulative from all sessions)
-
-1. GPU offload: `n_gpu_layers: -1` required. Already set.
-2. Thinking mode: `enable_thinking: false` required. Already set.
-3. Concurrent inference: crashes wllama. `runRound` calls agents sequentially. Already fixed.
-4. Single-word extraction: 100% valid, ~187ms/run. Already implemented.
-5. OPFS cache: per-origin. `localhost:5173` and Cloudflare are separate caches. First load ~5 min, cached ~2-5s.
-6. Firefox: WebGPU disabled. Only test in Edge.
-7. COEP removed from Cloudflare `_headers` — HF's LFS CDN doesn't send `Cross-Origin-Resource-Policy: cross-origin`. wllama falls back to single-thread without COEP (WebGPU still works). Local dev keeps COEP.
-8. wllama URL validation: `loadModelFromUrl` requires the URL to end in `.gguf`.
-9. HF XET CDN: streams file without Content-Length. Worker adds it explicitly, but Cloudflare strips it when proxying a streaming body. Client-side fallback uses the known constant (535_171_328).
-10. llama.cpp console noise: `slot update_slots:` and `srv ` prefix messages suppressed in LOG_SKIP.
-11. `/__log` 404 on Cloudflare: health-checked once at startup; logging silenced for the session if not ok.
-12. Do not use IQ/imatrix quants — excluded in the build plan. 1-bit GGUF quants would likely produce incoherent output at 0.8B.
-
-## What to do next — Phase 2 (Mini-Mafia)
-
-Branch: `feat/phase-2-mafia` (already checked out, no commits yet)
-
-**Read `llm-arena-build-plan.md` Phase 2 section before starting.** Key points:
-- 4 players: 1 mafioso, 1 detective, 2 villagers
-- Hidden roles — each agent gets a different AgentView (referee owns all asymmetry)
-- Night phase: mafioso picks a kill target; detective investigates one player
-- Day phase: all players discuss (speak moves), then vote to eliminate one
-- Repeat until mafia wins (equal or outnumber villagers) or villagers win (mafia eliminated)
-- `Move` discriminated union needs `{kind:"vote", target}` and `{kind:"speak", text}` in addition to existing structure
-- Tool calling may earn its place here for structured vote/action moves (vs single-word for IPD)
-- Crib rules from `bastoscostadavi/llm-mafia-game` (verify it still exists)
-- Memory stays referee-owned per agent — do not let the 0.8B model manage its own memory
-- Build the referee with RandomAgent and unit-test completely before touching LLMAgent
-
-**Start with:** new `src/referee/mafia.ts` + `src/referee/mafia.test.ts` — types, state machine, legal moves, win condition. No model, no UI yet.
+1. GPU offload: `n_gpu_layers: -1` required. Default is CPU-only.
+2. Thinking mode: `enable_thinking: false` required AND strip leaked `<think>` tags in output.
+3. Concurrent inference: wllama returns null. Enforced serial via `WllamaClient.inferenceQueue`.
+4. Single-word extraction: 100% valid for IPD. Mafia uses tool calling (`tool_choice: "required"`).
+5. OPFS cache: per-origin. localhost:5173 and Cloudflare are separate caches. First load ~5 min.
+6. Firefox: WebGPU disabled. Edge only.
+7. COEP removed from `_headers` — HF's CDN doesn't send `Cross-Origin-Resource-Policy`. wllama falls back to single-thread without COEP. Local dev keeps COEP.
+8. wllama URL validation: `loadModelFromUrl` requires URL ending in `.gguf`.
+9. HF XET CDN strips Content-Length. Fallback: hardcoded `535_171_328` bytes.
+10. llama.cpp console noise: `slot ` and `srv ` prefixes suppressed in LOG_SKIP.
+11. `/__log` 404 on Cloudflare: health-checked once at startup; logging silenced if not ok.
+12. Mafia tool calling: `tool_choice: "required"` forces tool response. 3x retry then random fallback.
+13. Negative constraints in prompts backfire on 0.8B models — "NEVER say kill" makes it say kill. Use positive-only instructions.
+14. Tab cancellation: `GameCancelledError` is thrown after each `agent.decide()` if `shouldStop()` returns true. Caller catches it and returns early. Old runner exits within one inference call of the tab switch.
