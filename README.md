@@ -1,21 +1,30 @@
 # LLM Arena
 
-A browser-based Iterated Prisoner's Dilemma tournament where language model agents compete against each other using distinct personality strategies. Everything runs locally in the browser - no server, no API keys.
+A browser-based experiment in multi-agent AI: language model instances with distinct personalities compete against each other in social deduction and game theory scenarios. Everything runs locally in the browser - no server, no API keys.
 
 **Live demo:** https://llm-arena.viribus.workers.dev
 
-## What it does
+## Games
 
-Four LLM agents (tit-for-tat, always-defect, always-cooperate, grudger) play 10 rounds of round-robin IPD. A live UI shows token streaming as each agent decides, a score bar chart that updates after every round, and a head-to-head payoff grid.
+### Mini-Mafia
+Eight LLM agents are secretly assigned roles (mafioso, detective, medic, villagers) and play a full hidden-role deduction game. Each night the mafioso eliminates a player, the detective investigates one, and the medic protects one. Each day agents discuss in free text and vote to eliminate a suspect. Roles are randomised each game; personalities stay fixed.
 
-The model (Qwen3.5-0.8B, ~500 MB) downloads once and is cached in the browser's OPFS storage. Subsequent loads take a few seconds.
+### Iterated Prisoner's Dilemma
+Four agents (tit-for-tat, always-defect, always-cooperate, grudger) play a 10-round round-robin tournament. A live score bar chart and head-to-head payoff grid update after every round.
+
+Both games share the same model instance. Switch between them with the tab bar at the top.
+
+## How it works
+
+The model (Qwen3.5-0.8B, ~500 MB) downloads once and is cached in the browser's OPFS storage. Subsequent loads take a few seconds. Structured decisions (who to kill, who to vote out) use tool calling with an enum constraint so the model must pick from the exact set of legal targets. Free-text discussion streams token by token into each player's row.
 
 ## Tech stack
 
-- **Runtime**: [wllama](https://github.com/ngxson/wllama) - runs llama.cpp compiled to WebAssembly
-- **Model**: Qwen3.5-0.8B-Q4_K_M (4-bit quantized, via Unsloth on HuggingFace)
-- **GPU**: WebGPU backend (RDNA1+ on AMD, recent NVIDIA/Intel)
+- **Runtime**: [wllama](https://github.com/ngxson/wllama) - llama.cpp compiled to WebAssembly
+- **Model**: Qwen3.5-0.8B-Q4_1 (4-bit quantized, via Unsloth on HuggingFace)
+- **GPU**: WebGPU backend (RDNA1+ AMD, recent NVIDIA/Intel)
 - **Build**: Vite + TypeScript
+- **Deploy**: Cloudflare Workers (model proxied same-origin to avoid CORS)
 
 ## Requirements
 
@@ -30,30 +39,31 @@ npm install
 npm run dev
 ```
 
-Then open `http://localhost:5173` in Edge or Chrome. First load downloads the model (~5 min depending on connection). Cached reloads take a few seconds.
+Open `http://localhost:5173` in Edge or Chrome. First load downloads the model (~5 min depending on connection). Cached reloads take a few seconds.
 
 ```bash
-npm test   # run the 21 unit tests for the referee/IPD logic
+npm test   # 102 unit tests covering both game engines
 ```
 
 ## Project structure
 
 ```
 src/
-  referee/    # IPD rules, payoff matrix, game state
-  agents/     # Agent interface, RandomAgent, LLMAgent
-  llm/        # WllamaClient - model loading and inference
-  ui/         # Entry point, DOM layout, render functions
+  referee/    # Game engines: IPD rules + Mafia state machine, phases, win conditions
+  agents/     # Agent interfaces, RandomAgents, LLMAgents (IPD + Mafia)
+  llm/        # WllamaClient - model loading, serial inference queue, tool calling
+  ui/         # Tab switcher, game runners, streaming render functions
 ```
 
 ## Phases
 
 - **Phase 0** - de-risk spike: confirmed WebGPU inference, GPU offload, streaming API, OPFS cache
-- **Phase 1** - referee + LLM agents + minimal UI (current)
-- **Phase 2** - planned: Mini-Mafia (hidden roles, night/day phases, voting, elimination)
+- **Phase 1** - IPD referee + LLM agents + live UI (complete)
+- **Phase 2** - Mini-Mafia with hidden roles, night/day phases, tool-call decisions, streaming speech (complete)
 
 ## Notes
 
-- Thinking mode (`enable_thinking`) must be explicitly disabled for Qwen3.5 or the model spends its entire token budget on an internal chain-of-thought and returns nothing
+- Thinking mode (`enable_thinking`) must be explicitly disabled for Qwen3.5 or the model spends its entire token budget on internal reasoning and returns nothing
 - GPU offload requires `n_gpu_layers: -1` - wllama defaults to CPU-only
-- wllama crashes on concurrent inference calls; agents decide sequentially
+- wllama does not support concurrent inference; a serial queue in WllamaClient enforces one call at a time
+- Negative constraints ("never say X") in system prompts backfire on small models; positive-only instructions work better
