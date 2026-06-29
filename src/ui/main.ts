@@ -270,15 +270,24 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
       ui.appendLog(`── Round ${round}: Day — Vote ───────────────────`);
     }
 
+    // Tracks discussion pass state so beforeDecide can include it in the status bar.
+    let currentDiscussPass = 1;
+    let totalDiscussPasses = 1;
+
     try {
       state = await stepPhase(agents, state, {
         shouldStop: isCancelled,
         beforeDecide(agentId) {
           const label =
             phase === "night"       ? "Night"    :
-            phase === "day-discuss" ? "Speaking" : "Voting";
+            phase === "day-discuss" ? `Discussion ${currentDiscussPass}/${totalDiscussPasses}` : "Voting";
           ui.setStatus(`Round ${round} · ${label} · ${agentId} is deciding…`);
           if (phase === "day-discuss") ui.setStreamingAgent(agentId);
+        },
+        onDiscussPass(pass, total) {
+          currentDiscussPass = pass;
+          totalDiscussPasses = total;
+          ui.appendLog(`  — discussion pass ${pass}/${total} —`);
         },
         onToken(_agentId, fragment) {
           ui.appendStreamToken(fragment);

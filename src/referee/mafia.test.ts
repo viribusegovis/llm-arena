@@ -4,6 +4,7 @@ import {
   buildAgentView,
   checkWin,
   createInitialState,
+  discussPasses,
   getLegalMoves,
   isValidMove,
   stepPhase,
@@ -420,13 +421,31 @@ describe("stepPhase — night", () => {
   });
 });
 
+// ---- discussPasses ----
+
+describe("discussPasses", () => {
+  it("returns 1 for 3-4 players", () => {
+    expect(discussPasses(3)).toBe(1);
+    expect(discussPasses(4)).toBe(1);
+  });
+
+  it("returns 2 for 5-8 players", () => {
+    expect(discussPasses(5)).toBe(2);
+    expect(discussPasses(8)).toBe(2);
+  });
+
+  it("never returns less than 1", () => {
+    expect(discussPasses(1)).toBe(1);
+  });
+});
+
 // ---- stepPhase — day-discuss ----
 
 describe("stepPhase — day-discuss", () => {
   it("all alive players add entries to the transcript", async () => {
     const s = makeState({ phase: "day-discuss" });
     const next = await stepPhase(makeAgents(), s);
-    // All 4 alive players speak once.
+    // 4 alive players → ceil(4/4) = 1 pass → 4 entries total.
     expect(next.transcript).toHaveLength(4);
     for (const id of ["maf", "det", "v1", "v2"]) {
       expect(next.transcript.some((e) => e.playerId === id)).toBe(true);
@@ -436,6 +455,7 @@ describe("stepPhase — day-discuss", () => {
   it("dead players do not add transcript entries", async () => {
     const s = killPlayer(makeState({ phase: "day-discuss" }), "v1");
     const next = await stepPhase(makeAgents(), s);
+    // 3 alive players → ceil(3/4) = 1 pass → 3 entries.
     expect(next.transcript).toHaveLength(3);
     expect(next.transcript.some((e) => e.playerId === "v1")).toBe(false);
   });
@@ -458,6 +478,24 @@ describe("stepPhase — day-discuss", () => {
     const next = await stepPhase(makeAgents(), s);
     expect(next.transcript[0]).toEqual(prior[0]);
     expect(next.transcript.length).toBeGreaterThan(1);
+  });
+
+  it("8 alive players get 2 passes = 16 transcript entries", async () => {
+    const players = [
+      { id: "maf", role: "mafioso" as const },
+      { id: "det", role: "detective" as const },
+      { id: "med", role: "medic" as const },
+      { id: "v1",  role: "villager" as const },
+      { id: "v2",  role: "villager" as const },
+      { id: "v3",  role: "villager" as const },
+      { id: "v4",  role: "villager" as const },
+      { id: "v5",  role: "villager" as const },
+    ];
+    const agents = players.map((p) => new MafiaRandomAgent(p.id));
+    const s = { ...createInitialState(players), phase: "day-discuss" as const };
+    const next = await stepPhase(agents, s);
+    // ceil(8/4) = 2 passes × 8 players = 16 entries
+    expect(next.transcript).toHaveLength(16);
   });
 });
 

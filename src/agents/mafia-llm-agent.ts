@@ -69,15 +69,28 @@ function buildSpeakMessage(view: MafiaAgentView): string {
     parts.push(`${gone.join(", ")} ${gone.length === 1 ? "has" : "have"} been removed.`);
   }
 
-  // Only the single most recent statement — more causes echoing in small models.
-  const last = view.transcript.slice(-1);
-  if (last.length > 0) {
-    parts.push(`${last[0].playerId} just said: "${last[0].text}"`);
+  // Show the last 3 statements from this round only — enough context to react to
+  // what was just said without pulling in stale accusations from earlier rounds.
+  // Cap at 3: tiny models echo when given too much transcript at once.
+  const thisRound = view.transcript
+    .filter((e) => e.round === view.round)
+    .slice(-3);
+  if (thisRound.length > 0) {
+    for (const e of thisRound) {
+      parts.push(`${e.playerId} said: "${e.text}"`);
+    }
   }
 
-  // Multiple-choice format: harder for tiny models to echo than an open question,
-  // and puts the names right where generation starts so one gets picked naturally.
-  parts.push(`Who do you distrust most — ${view.alivePlayers.join(", ")}?`);
+  // Pass 1: open accusations — anchor the model to a name with multiple-choice format.
+  // Pass 2: reactions — same anchor trick, but framed as a response to what was said.
+  // Multiple-choice keeps a player name at the start of the generated text, which
+  // makes tiny models far more likely to actually name someone rather than rambling.
+  const question =
+    view.discussPass === 2
+      ? `What do you say in response — ${view.alivePlayers.join(", ")}?`
+      : `Who do you distrust most — ${view.alivePlayers.join(", ")}?`;
+
+  parts.push(question);
   return parts.join("\n");
 }
 

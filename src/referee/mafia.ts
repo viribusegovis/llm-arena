@@ -109,6 +109,8 @@ export interface MafiaAgentView {
   // The legal moves available right now. RandomAgent picks one; LLMAgent uses this to
   // constrain output to actions that are actually allowed in the current phase.
   legalMoves: MafiaMove[];
+  // Only set during day-discuss. 1-indexed: 1 = initial accusations, 2 = reactions/rebuttals.
+  discussPass?: number;
 }
 
 // The contract every Mafia agent must satisfy. Parallel structure to the IPD Agent interface.
@@ -263,7 +265,12 @@ export function isValidMove(
 
 // Builds the filtered snapshot the referee hands to one player before they decide.
 // The information asymmetry between roles is enforced here and nowhere else.
-export function buildAgentView(state: MafiaGameState, playerId: string): MafiaAgentView {
+// discussPass is only passed during the day-discuss phase (1 = accusations, 2 = reactions).
+export function buildAgentView(
+  state: MafiaGameState,
+  playerId: string,
+  discussPass?: number,
+): MafiaAgentView {
   const player = state.players.find((p) => p.id === playerId)!;
   const view: MafiaAgentView = {
     myId: playerId,
@@ -275,6 +282,7 @@ export function buildAgentView(state: MafiaGameState, playerId: string): MafiaAg
     transcript: state.transcript,
     eliminated: state.eliminated,
     legalMoves: getLegalMoves(state, playerId),
+    discussPass,
   };
 
   // Only the detective receives their private investigation log.
@@ -390,8 +398,10 @@ function resolveNight(
   return next;
 }
 
-// Collects one speak move from each alive player and appends to the transcript.
-// Each player sees the transcript entries added before them in the same discussion.
+// Collects speak moves from each alive player for multiple passes before advancing to the vote.
+// Pass count scales with how many players are alive: ceil(alive / 4).
+// 8 players → 2 passes, 3-4 players → 1 pass. More players need more back-and-forth;
+// late-game with fewer players, one round of statements is enough.
 async function stepDayDiscuss(
   agents: MafiaAgent[],
   state: MafiaGameState,
@@ -399,25 +409,39 @@ async function stepDayDiscuss(
 ): Promise<MafiaGameState> {
   let transcript = [...state.transcript];
 
-  for (const agent of agents) {
-    const isAlive = state.players.find((p) => p.id === agent.id)?.isAlive;
-    if (!isAlive) continue;
+  const aliveCount = state.players.filter((p) => p.isAlive).length;
+  // At least 1 pass; grows as the game starts with more players.
+  const passes = Math.max(1, Math.ceil(aliveCount / 4));
 
-    callbacks?.beforeDecide?.(agent.id);
-    // Pass the growing transcript so speakers can react to prior messages this round.
-    const view = buildAgentView({ ...state, transcript }, agent.id);
-    const move = await agent.decide(
-      view,
-      callbacks?.onToken ? (f) => callbacks.onToken!(agent.id, f) : undefined,
-    );
-    if (callbacks?.shouldStop?.()) throw new GameCancelledError();
+  for (let pass = 1; pass <= passes; pass++) {
+    callbacks?.onDiscussPass?.(pass, passes);
 
-    if (move.kind === "speak" && move.text.trim().length > 0) {
-      transcript = [...transcript, { round: state.round, playerId: agent.id, text: move.text }];
+    for (const agent of agents) {
+      const isAlive = state.players.find((p) => p.id === agent.id)?.isAlive;
+      if (!isAlive) continue;
+
+      callbacks?.beforeDecide?.(agent.id);
+      // Pass the growing transcript and current pass index so each speaker can
+      // react to what came before them — both earlier in this pass and in pass 1.
+      const view = buildAgentView({ ...state, transcript }, agent.id, pass);
+      const move = await agent.decide(
+        view,
+        callbacks?.onToken ? (f) => callbacks.onToken!(agent.id, f) : undefined,
+      );
+      if (callbacks?.shouldStop?.()) throw new GameCancelledError();
+
+      if (move.kind === "speak" && move.text.trim().length > 0) {
+        transcript = [...transcript, { round: state.round, playerId: agent.id, text: move.text }];
+      }
     }
   }
 
   return { ...state, transcript, phase: "day-vote" };
+}
+
+// Exported for tests that want to verify pass count without running a full game.
+export function discussPasses(aliveCount: number): number {
+  return Math.max(1, Math.ceil(aliveCount / 4));
 }
 
 // Collects one vote from each alive player, resolves via plurality, and applies elimination.
@@ -512,6 +536,8 @@ export interface MafiaCallbacks {
   beforeDecide?: (agentId: string) => void;
   // Fires once per streamed text fragment during day-discuss speak moves.
   onToken?: (agentId: string, fragment: string) => void;
+  // Fires at the start of each discussion pass (1-indexed). Use to label passes in the UI log.
+  onDiscussPass?: (pass: number, total: number) => void;
   // If provided, checked after each agent decides. Return true to abort the phase early.
   // Caller catches the thrown GameCancelledError to exit the game runner cleanly.
   shouldStop?: () => boolean;
