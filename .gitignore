@@ -6,3 +6,6 @@ spike-log.txt
 spike-log.prev.txt
 build_log.txt
 tsconfig.tsbuildinfo
+CLAUDE.md
+HANDOFF.md
+llm-arena-build-plan.md
