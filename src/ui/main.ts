@@ -7,6 +7,7 @@ import { createInitialState as mafiaCreateInitial, stepPhase, GameCancelledError
 import type { MafiaGameState, Role } from "../referee/mafia";
 import type { GameState } from "../referee/types";
 import { initIPDLayout, initMafiaLayout } from "./render";
+import { recordMafiaGame, recordIPDGame, initLeaderboardLayout } from "./leaderboard";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -165,10 +166,20 @@ const IPD_PERSONALITIES: Record<string, string> = {
     "You are playing the Prisoner's Dilemma. You are an idealistic cooperator who believes " +
     "mutual trust is the only path to the best collective outcome. " +
     "Always cooperate, no matter what your opponent has done.",
-  "grudger":
-    "You are playing the Prisoner's Dilemma. You start by cooperating and will keep " +
-    "cooperating as long as your opponent has never defected against you. " +
-    "But if they defect even once, you defect against them for every remaining round — no forgiveness.",
+  "adaptive":
+    "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
+    "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
+    "both defect = +1 each. You have 10 rounds total against each opponent. " +
+    "Study the round history you are given and decide what will earn you the most points " +
+    "over the remaining rounds. Use your own judgment — there is no fixed rule to follow.",
+  "counter":
+    "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
+    "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
+    "both defect = +1 each. Your strategy is to read your opponent's pattern from the history and counter it: " +
+    "if they always cooperate, defect every round to exploit them; " +
+    "if they always defect, defect every round to avoid being exploited; " +
+    "if they tend to copy your last move, cooperate to lock in mutual +3 gains. " +
+    "When no clear pattern has emerged yet, defect by default.",
 };
 
 const IPD_ROUNDS = 10;
@@ -179,17 +190,62 @@ const IPD_ROUNDS = 10;
 const client = new WllamaClient();
 let loadedPromise: Promise<void> | null = null;
 
-// ── Tab / game state ──────────────────────────────────────────────────────────
-// gameId increments on every tab switch or mode toggle. Each runner captures its
-// id at launch and returns early at loop checkpoints if the id has moved on.
-let gameId = 0;
+// ── Per-game slot state ───────────────────────────────────────────────────────
+// Each game tab (Mafia, IPD) has its own slot so they can run independently.
+// Switching between the two game tabs background-pauses the leaving game and
+// resumes the arriving one. Switching to/from Leaderboard lets games run freely.
+interface Slot {
+  // Incremented on cancel — game loops compare this to their captured id to know they were cancelled.
+  gameId: number;
+  // True when the loop is parked at a waitIfPausedFor checkpoint (user-paused OR bg-paused).
+  paused: boolean;
+  // True only when the user explicitly pressed Pause — persists across tab switches.
+  userPaused: boolean;
+  // Resolve function for the pending pause promise; set inside waitIfPausedFor.
+  pauseResolve: (() => void) | null;
+  // Mafia only — the active HumanMafiaAgent, if any; cancelled when game is interrupted.
+  humanAgent: HumanMafiaAgent | null;
+  status: "idle" | "running" | "paused" | "stopped" | "finished";
+}
 
+function makeSlot(): Slot {
+  return { gameId: 0, paused: false, userPaused: false, pauseResolve: null, humanAgent: null, status: "idle" };
+}
+
+const mafiaSlot = makeSlot();
+const ipdSlot   = makeSlot();
+
+function slotFor(tab: "mafia" | "ipd"): Slot {
+  return tab === "mafia" ? mafiaSlot : ipdSlot;
+}
+
+// Lift the pause block — wakes up any loop waiting inside waitIfPausedFor.
+function releaseSlot(slot: Slot): void {
+  const resolve = slot.pauseResolve;
+  slot.paused       = false;
+  slot.pauseResolve = null;
+  resolve?.();
+}
+
+// Stop whatever is running: cancel pending human input, lift any pause,
+// and bump gameId so the running loop sees isCancelled() and exits cleanly.
+function cancelSlot(slot: Slot): void {
+  slot.humanAgent?.cancel();
+  slot.humanAgent  = null;
+  slot.userPaused  = false;
+  releaseSlot(slot);
+  slot.gameId++;
+}
+
+// Called inside game loops between turns. Suspends until the slot is unpaused.
+async function waitIfPausedFor(slot: Slot): Promise<void> {
+  if (!slot.paused) return;
+  await new Promise<void>((r) => { slot.pauseResolve = r; });
+}
+
+// ── humanPlays flag ───────────────────────────────────────────────────────────
 // Whether the human is playing as the mafioso. Persists across game restarts.
 let humanPlays = false;
-
-// The active HumanMafiaAgent, if any. Cancelled when the game is interrupted so
-// the player's pending input Promise rejects and the game loop exits cleanly.
-let currentHumanAgent: HumanMafiaAgent | null = null;
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
@@ -197,44 +253,176 @@ async function main(): Promise<void> {
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="mafia">Mini-Mafia</button>
       <button class="tab-btn" data-tab="ipd">Prisoner&rsquo;s Dilemma</button>
+      <button class="tab-btn" data-tab="leaderboard">Leaderboard</button>
+      <div class="game-controls">
+        <span id="game-state" class="game-state" hidden></span>
+        <button id="restart-btn" class="ctrl-btn">Restart</button>
+        <button id="pause-btn" class="ctrl-btn" hidden>Pause</button>
+        <button id="stop-btn" class="ctrl-btn ctrl-btn-stop" hidden>Stop</button>
+      </div>
     </div>
-    <div id="game-container"></div>
+    <div id="mafia-container"></div>
+    <div id="ipd-container" hidden></div>
+    <div id="leaderboard-container" hidden></div>
   `;
 
-  const gameContainer = app.querySelector<HTMLElement>("#game-container")!;
-  const tabBtns = Array.from(app.querySelectorAll<HTMLButtonElement>(".tab-btn"));
+  const mafiaContainer       = app.querySelector<HTMLElement>("#mafia-container")!;
+  const ipdContainer         = app.querySelector<HTMLElement>("#ipd-container")!;
+  const leaderboardContainer = app.querySelector<HTMLElement>("#leaderboard-container")!;
+  const tabBtns    = Array.from(app.querySelectorAll<HTMLButtonElement>(".tab-btn"));
+  const restartBtn = app.querySelector<HTMLButtonElement>("#restart-btn")!;
+  const pauseBtn   = app.querySelector<HTMLButtonElement>("#pause-btn")!;
+  const stopBtn    = app.querySelector<HTMLButtonElement>("#stop-btn")!;
+  const stateEl    = app.querySelector<HTMLElement>("#game-state")!;
+
+  // currentTab: which tab is visible right now.
+  let currentTab: "mafia" | "ipd" | "leaderboard" = "mafia";
+  // activeGameTab: which game's controls to show; stays on the last game tab even
+  // while leaderboard is visible.
+  let activeGameTab: "mafia" | "ipd" = "mafia";
+
+  function containerFor(tab: "mafia" | "ipd"): HTMLElement {
+    return tab === "mafia" ? mafiaContainer : ipdContainer;
+  }
+
+  // Show exactly one container; hide the other two.
+  function showOnly(tab: "mafia" | "ipd" | "leaderboard"): void {
+    mafiaContainer.hidden       = tab !== "mafia";
+    ipdContainer.hidden         = tab !== "ipd";
+    leaderboardContainer.hidden = tab !== "leaderboard";
+  }
+
+  // Sync buttons and state badge to the foreground slot's current status.
+  // Called whenever slot.status or tab visibility changes.
+  function syncControls(): void {
+    if (currentTab === "leaderboard") {
+      restartBtn.hidden = true;
+      pauseBtn.hidden   = true;
+      stopBtn.hidden    = true;
+      stateEl.hidden    = true;
+      return;
+    }
+    const slot = slotFor(activeGameTab);
+    restartBtn.hidden = false;
+    const isActive = slot.status === "running" || slot.status === "paused";
+    pauseBtn.hidden = !isActive;
+    stopBtn.hidden  = !isActive;
+    const stateConfigs: Record<Slot["status"], { label: string; cls: string }> = {
+      idle:     { label: "",            cls: ""                    },
+      running:  { label: "",            cls: ""                    },
+      paused:   { label: "⏸  Paused",   cls: "game-state-paused"   },
+      stopped:  { label: "■  Stopped",  cls: "game-state-stopped"  },
+      finished: { label: "✓  Finished", cls: "game-state-finished" },
+    };
+    const cfg = stateConfigs[slot.status];
+    stateEl.hidden      = slot.status === "running" || slot.status === "idle";
+    stateEl.textContent = cfg.label;
+    stateEl.className   = `game-state ${cfg.cls}`;
+    pauseBtn.textContent = slot.userPaused ? "Resume" : "Pause";
+  }
+
+  // Cancel whatever is running in this slot's tab and launch a fresh game.
+  function startGame(tab: "mafia" | "ipd"): void {
+    const slot      = slotFor(tab);
+    const container = containerFor(tab);
+    cancelSlot(slot);
+    slot.status = "running";
+    const myId = slot.gameId;
+    const onComplete = () => {
+      slot.status = "finished";
+      // Only update controls if this game's tab is the one currently shown.
+      if (activeGameTab === tab && currentTab !== "leaderboard") syncControls();
+    };
+    void (tab === "mafia"
+      ? runMafiaGame(container, slot, myId, onComplete)
+      : runIPDGame(container, slot, myId, onComplete));
+  }
 
   for (const btn of tabBtns) {
     btn.addEventListener("click", () => {
       if (btn.classList.contains("active")) return;
       tabBtns.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      currentHumanAgent?.cancel();
-      currentHumanAgent = null;
-      gameId++;
-      const tab = btn.dataset.tab as "mafia" | "ipd";
-      void launchGame(gameContainer, tab, gameId);
+
+      const nextTab = btn.dataset.tab as "mafia" | "ipd" | "leaderboard";
+      currentTab = nextTab;
+
+      if (nextTab === "leaderboard") {
+        // Leaderboard has no model — games can keep running freely in the background.
+        showOnly("leaderboard");
+        initLeaderboardLayout(leaderboardContainer);
+        syncControls();
+        return;
+      }
+
+      // Switching to a game tab: if it's different from the currently active game,
+      // background-pause that game so only one game runs inference at a time.
+      if (activeGameTab !== nextTab) {
+        const prev = slotFor(activeGameTab);
+        // Only mark as paused if running and not already paused.
+        // Status intentionally stays "running" — bg pause is transparent to the user.
+        if (prev.status === "running" && !prev.paused) {
+          prev.paused = true;
+        }
+      }
+
+      activeGameTab = nextTab;
+      showOnly(nextTab);
+      const incoming = slotFor(nextTab);
+
+      if (incoming.gameId === 0) {
+        // First visit to this tab — start the game for the first time.
+        startGame(nextTab);
+      } else if (incoming.paused && !incoming.userPaused) {
+        // Auto-resume a background-paused game (the user didn't manually pause it).
+        releaseSlot(incoming);
+      }
+      // If incoming.userPaused: leave it — syncControls shows "Resume" for the user.
+
+      syncControls();
     });
   }
 
-  await launchGame(gameContainer, "mafia", gameId);
-}
+  restartBtn.addEventListener("click", () => {
+    startGame(activeGameTab);
+    syncControls();
+  });
 
-async function launchGame(
-  container: HTMLElement,
-  tab: "mafia" | "ipd",
-  myGameId: number,
-): Promise<void> {
-  if (tab === "mafia") {
-    await runMafiaGame(container, myGameId);
-  } else {
-    await runIPDGame(container, myGameId);
-  }
+  pauseBtn.addEventListener("click", () => {
+    const slot = slotFor(activeGameTab);
+    if (!slot.userPaused) {
+      slot.userPaused = true;
+      slot.paused     = true;
+      slot.status     = "paused";
+    } else {
+      slot.userPaused = false;
+      slot.status     = "running";
+      releaseSlot(slot);
+    }
+    syncControls();
+  });
+
+  stopBtn.addEventListener("click", () => {
+    const slot = slotFor(activeGameTab);
+    cancelSlot(slot);
+    slot.status = "stopped";
+    syncControls();
+  });
+
+  // Auto-start Mafia on page load.
+  startGame("mafia");
+  syncControls();
 }
 
 // ── Mafia runner ──────────────────────────────────────────────────────────────
-async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<void> {
-  const isCancelled = () => gameId !== myGameId;
+async function runMafiaGame(
+  container: HTMLElement,
+  slot: Slot,
+  myGameId: number,
+  onComplete: () => void,
+): Promise<void> {
+  // isCancelled: returns true if this game instance was replaced (tab switch / restart).
+  const isCancelled = () => slot.gameId !== myGameId;
 
   // Assign roles randomly each game so the same personality can play any role.
   const assignments = assignRoles(humanPlays);
@@ -243,11 +431,12 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
   const medicId     = assignments.find((a) => a.role === "medic")!.id;
 
   const ui = initMafiaLayout(container, mafiaIds, humanPlays, (on) => {
-    currentHumanAgent?.cancel();
-    currentHumanAgent = null;
+    // Human/AI toggle fired — restart this game with the new play mode.
     humanPlays = on;
-    gameId++;
-    void runMafiaGame(container, gameId);
+    cancelSlot(slot);
+    slot.status = "running";
+    const newId = slot.gameId;
+    void runMafiaGame(container, slot, newId, onComplete);
   });
   ui.appendLog("=== LLM Arena — Mini-Mafia ===\n");
 
@@ -281,7 +470,8 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
     }
     return new MafiaLLMAgent(id, systemPrompt, client);
   });
-  currentHumanAgent = humanAgent;
+  // Store on the slot so cancelSlot() can cancel pending human input if needed.
+  slot.humanAgent = humanAgent;
 
   ui.appendLog(`Agents: ${mafiaIds.join(", ")}`);
   if (humanPlays) {
@@ -299,6 +489,8 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
 
   while (state.phase !== "game-over") {
     if (isCancelled()) return;
+    await waitIfPausedFor(slot);
+    if (isCancelled()) return; // re-check: Stop may have been pressed during pause
 
     const phase = state.phase;
     const round = state.round;
@@ -380,7 +572,9 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
     ui.appendLog("");
   }
 
-  const winner   = state.winner!;
+  const winner = state.winner!;
+  recordMafiaGame(assignments, winner);
+  onComplete();
   const winLabel = winner === "mafia" ? "MAFIA WINS" : "VILLAGERS WIN";
 
   ui.setStatus(`Game over — ${winLabel}`);
@@ -403,8 +597,13 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
 }
 
 // ── IPD runner ────────────────────────────────────────────────────────────────
-async function runIPDGame(container: HTMLElement, myGameId: number): Promise<void> {
-  const isCancelled = () => gameId !== myGameId;
+async function runIPDGame(
+  container: HTMLElement,
+  slot: Slot,
+  myGameId: number,
+  onComplete: () => void,
+): Promise<void> {
+  const isCancelled = () => slot.gameId !== myGameId;
   const agentIds = Object.keys(IPD_PERSONALITIES);
 
   const ui = initIPDLayout(container, agentIds);
@@ -440,6 +639,8 @@ async function runIPDGame(container: HTMLElement, myGameId: number): Promise<voi
 
   for (let round = 1; round <= IPD_ROUNDS; round++) {
     if (isCancelled()) return;
+    await waitIfPausedFor(slot);
+    if (isCancelled()) return; // re-check: Stop may have been pressed during pause
 
     ui.setStatus(`Round ${round} / ${IPD_ROUNDS}`);
     ui.appendLog(`--- Round ${round} ---`);
@@ -463,6 +664,8 @@ async function runIPDGame(container: HTMLElement, myGameId: number): Promise<voi
 
   if (isCancelled()) return;
 
+  recordIPDGame(state.scores);
+  onComplete();
   ui.setStatus("Match complete!");
   ui.appendLog("\n=== Final scores ===");
   for (const [id, score] of Object.entries(state.scores).sort(([, a], [, b]) => b - a)) {
