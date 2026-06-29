@@ -111,7 +111,7 @@
         margin-bottom: 0.5rem;
       }
       .bar-label {
-        width: 150px;
+        width: 190px;
         text-align: right;
         font-size: 0.82rem;
         color: #8892a4;
@@ -170,6 +170,8 @@
       }
       .heatmap-self { color: #1e2838; background: #0b0e16 !important; }
       .heatmap-cell { color: #fff; }
+      .heatmap-tactic { font-size: 0.62rem; color: #3a4050; font-weight: normal; }
+      .bar-label-tactic { font-size: 0.72rem; color: #3a4050; }
       .dim { color: #2e3a52; font-style: italic; font-size: 0.82rem; }
 
       /* ── Explainer section ───────────────────────────────────────────────── */
@@ -201,6 +203,7 @@
         gap: 0.35rem;
       }
       .agent-chip { font-weight: bold; }
+      .agent-personality-tag { color: #3a4050; font-size: 0.78rem; }
       .explainer-link { color: #5bb8f5; text-decoration: none; }
       .explainer-link:hover { text-decoration: underline; }
 
@@ -217,7 +220,9 @@
       .player-dot { font-size: 0.7rem; flex-shrink: 0; }
       .player-dot.alive { color: #6ee77a; }
       .player-dot.dead  { color: #3a4050; }
-      .player-name { flex: 1; font-weight: bold; font-size: 0.88rem; color: var(--agent-color, #8892a4); }
+      .player-name { font-weight: bold; font-size: 0.88rem; color: var(--agent-color, #8892a4); }
+      /* Dim personality tag shown after the name: "Alice (paranoid)" */
+      .player-personality { font-size: 0.72rem; color: #3a4050; margin-left: 0.25rem; flex: 1; }
       /* Inline quote: hidden when empty, streams in during day-discuss */
       .player-quote { display: none; font-style: italic; font-size: 0.76rem; color: var(--agent-color, #8892a4); opacity: 0.75; padding-top: 0.2rem; padding-left: 1.3rem; line-height: 1.45; }
       .player-quote:not(:empty) { display: block; }

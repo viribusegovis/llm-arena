@@ -45,51 +45,54 @@ for (const level of ["log", "warn", "error", "debug"] as const) {
 // Roles (mafioso / detective / medic / villager) are assigned randomly each game
 // and injected separately, so the same personality can play different roles.
 
-const MAFIA_PERSONALITIES: Array<{ id: string; personalityPrompt: string }> = [
+// Each personality has a fixed human name. The name is the agent's public id used
+// in the game state and LLM prompts — other agents never see the personality label.
+// The personality label is viewer-only: shown in the UI as "Alice (paranoid)".
+const MAFIA_PERSONALITIES: Array<{ id: string; name: string; personalityPrompt: string }> = [
   {
-    id: "paranoid",
+    id: "paranoid", name: "Alice",
     personalityPrompt:
       "You are a deeply anxious person who sees danger everywhere. You speak urgently, " +
       "jump to accusations quickly, and become defensive the moment anyone looks at you sideways.",
   },
   {
-    id: "analytical",
+    id: "analytical", name: "Ben",
     personalityPrompt:
       "You are a calm, methodical thinker. You reason from evidence, weigh your words carefully, " +
       "and express yourself in structured, measured sentences. You don't get emotional.",
   },
   {
-    id: "naive",
+    id: "naive", name: "Clara",
     personalityPrompt:
       "You are an optimistic, trusting person who wants to see the best in people. " +
       "You give others the benefit of the doubt, try to build consensus, and are easy to sway.",
   },
   {
-    id: "deceptive",
+    id: "deceptive", name: "David",
     personalityPrompt:
       "You are naturally guarded and strategic. You say little, watch carefully, and only speak " +
       "when you have a point worth making. You're hard to read and rarely show your full hand.",
   },
   {
-    id: "impulsive",
+    id: "impulsive", name: "Elena",
     personalityPrompt:
       "You are quick to decide and slow to reconsider. You state your opinion fast and " +
       "push others to commit. You don't like ambiguity and don't sit on the fence.",
   },
   {
-    id: "reserved",
+    id: "reserved", name: "Finn",
     personalityPrompt:
       "You are quiet and observant. In conversation you say as little as possible — " +
       "usually just one short sentence. You watch more than you talk.",
   },
   {
-    id: "dramatic",
+    id: "dramatic", name: "Grace",
     personalityPrompt:
       "You are theatrical and emotionally expressive. You react strongly to everything, " +
       "use vivid language, and make every situation feel urgent and consequential.",
   },
   {
-    id: "skeptical",
+    id: "skeptical", name: "Hugo",
     personalityPrompt:
       "You challenge everything and trust no one's stated reasoning. You poke holes in " +
       "other people's arguments and demand better evidence before committing to anything.",
@@ -123,7 +126,8 @@ const SPEAK_RULES = "When speaking, say exactly one sentence naming a specific p
 // Layout: 1 mafioso, 1 detective, 1 medic, 5 villagers = 8 total.
 // When humanPlays is true, the mafioso slot is reserved for "you" and only 7 LLM
 // personalities are used (one is left out each game at random).
-function assignRoles(isHuman: boolean): Array<{ id: string; role: Role; systemPrompt: string }> {
+// Returns: id = human name (what agents call each other); personality = personality key (viewer-only).
+function assignRoles(isHuman: boolean): Array<{ id: string; personality: string; role: Role; systemPrompt: string }> {
   const shuffled = [...MAFIA_PERSONALITIES].sort(() => Math.random() - 0.5);
   const roles: Role[] = [
     "mafioso", "detective", "medic",
@@ -134,9 +138,10 @@ function assignRoles(isHuman: boolean): Array<{ id: string; role: Role; systemPr
     // Human takes mafioso; 7 LLM agents take the remaining roles.
     const llmRoles = roles.slice(1); // detective, medic, villager×5
     return [
-      { id: "you", role: "mafioso", systemPrompt: "" },
+      { id: "Sam", personality: "you", role: "mafioso", systemPrompt: "" },
       ...shuffled.slice(0, 7).map((p, i) => ({
-        id: p.id,
+        id: p.name,           // name is the public id — what agents call each other
+        personality: p.id,    // personality key is viewer-only
         role: llmRoles[i],
         systemPrompt: `${p.personalityPrompt} ${ROLE_INSTRUCTIONS[llmRoles[i]]} ${SPEAK_RULES}`,
       })),
@@ -144,43 +149,61 @@ function assignRoles(isHuman: boolean): Array<{ id: string; role: Role; systemPr
   }
 
   return shuffled.map((p, i) => ({
-    id: p.id,
+    id: p.name,
+    personality: p.id,
     role: roles[i],
     systemPrompt: `${p.personalityPrompt} ${ROLE_INSTRUCTIONS[roles[i]]} ${SPEAK_RULES}`,
   }));
 }
 
-// ── IPD personality definitions ───────────────────────────────────────────────
+// ── IPD agent definitions ─────────────────────────────────────────────────────
+// id = human name (agents refer to each other by name, never by strategy label).
+// personality = strategy key — viewer-only, shown in UI and leaderboard.
 
-const IPD_PERSONALITIES: Record<string, string> = {
-  "tit-for-tat":
-    "You are playing the Prisoner's Dilemma. Your strategy is tit-for-tat: " +
-    "always cooperate on the first round, then copy whatever your opponent did last round. " +
-    "If they cooperated last round, cooperate. If they defected last round, defect. " +
-    "Follow this rule strictly.",
-  "always-defect":
-    "You are playing the Prisoner's Dilemma. You are a ruthless self-interested player. " +
-    "Defecting always gives you a better personal outcome regardless of what your opponent does. " +
-    "Always defect. Never cooperate under any circumstances.",
-  "always-cooperate":
-    "You are playing the Prisoner's Dilemma. You are an idealistic cooperator who believes " +
-    "mutual trust is the only path to the best collective outcome. " +
-    "Always cooperate, no matter what your opponent has done.",
-  "adaptive":
-    "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
-    "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
-    "both defect = +1 each. You have 10 rounds total against each opponent. " +
-    "Study the round history you are given and decide what will earn you the most points " +
-    "over the remaining rounds. Use your own judgment — there is no fixed rule to follow.",
-  "counter":
-    "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
-    "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
-    "both defect = +1 each. Your strategy is to read your opponent's pattern from the history and counter it: " +
-    "if they always cooperate, defect every round to exploit them; " +
-    "if they always defect, defect every round to avoid being exploited; " +
-    "if they tend to copy your last move, cooperate to lock in mutual +3 gains. " +
-    "When no clear pattern has emerged yet, defect by default.",
-};
+const IPD_AGENTS: Array<{ id: string; personality: string; prompt: string }> = [
+  {
+    id: "Iris", personality: "tit-for-tat",
+    prompt:
+      "You are playing the Prisoner's Dilemma. Your strategy is tit-for-tat: " +
+      "always cooperate on the first round, then copy whatever your opponent did last round. " +
+      "If they cooperated last round, cooperate. If they defected last round, defect. " +
+      "Follow this rule strictly.",
+  },
+  {
+    id: "Jack", personality: "always-defect",
+    prompt:
+      "You are playing the Prisoner's Dilemma. You are a ruthless self-interested player. " +
+      "Defecting always gives you a better personal outcome regardless of what your opponent does. " +
+      "Always defect. Never cooperate under any circumstances.",
+  },
+  {
+    id: "Kira", personality: "always-cooperate",
+    prompt:
+      "You are playing the Prisoner's Dilemma. You are an idealistic cooperator who believes " +
+      "mutual trust is the only path to the best collective outcome. " +
+      "Always cooperate, no matter what your opponent has done.",
+  },
+  {
+    id: "Leo", personality: "adaptive",
+    prompt:
+      "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
+      "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
+      "both defect = +1 each. You have 10 rounds total against each opponent. " +
+      "Study the round history you are given and decide what will earn you the most points " +
+      "over the remaining rounds. Use your own judgment — there is no fixed rule to follow.",
+  },
+  {
+    id: "Maya", personality: "counter",
+    prompt:
+      "You are playing the Prisoner's Dilemma. Payoffs per round: both cooperate = +3 each; " +
+      "you defect, they cooperate = +5 you / +0 them; you cooperate, they defect = +0 you / +5 them; " +
+      "both defect = +1 each. Your strategy is to read your opponent's pattern from the history and counter it: " +
+      "if they always cooperate, defect every round to exploit them; " +
+      "if they always defect, defect every round to avoid being exploited; " +
+      "if they tend to copy your last move, cooperate to lock in mutual +3 gains. " +
+      "When no clear pattern has emerged yet, defect by default.",
+  },
+];
 
 const IPD_ROUNDS = 10;
 
@@ -425,12 +448,12 @@ async function runMafiaGame(
   const isCancelled = () => slot.gameId !== myGameId;
 
   // Assign roles randomly each game so the same personality can play any role.
-  const assignments = assignRoles(humanPlays);
-  const mafiaIds    = assignments.map((a) => a.id);
-  const detectiveId = assignments.find((a) => a.role === "detective")!.id;
-  const medicId     = assignments.find((a) => a.role === "medic")!.id;
+  const assignments  = assignRoles(humanPlays);
+  const agentDisplay = assignments.map((a) => ({ id: a.id, personality: a.personality }));
+  const detectiveId  = assignments.find((a) => a.role === "detective")!.id;
+  const medicId      = assignments.find((a) => a.role === "medic")!.id;
 
-  const ui = initMafiaLayout(container, mafiaIds, humanPlays, (on) => {
+  const ui = initMafiaLayout(container, agentDisplay, humanPlays, (on) => {
     // Human/AI toggle fired — restart this game with the new play mode.
     humanPlays = on;
     cancelSlot(slot);
@@ -473,13 +496,14 @@ async function runMafiaGame(
   // Store on the slot so cancelSlot() can cancel pending human input if needed.
   slot.humanAgent = humanAgent;
 
-  ui.appendLog(`Agents: ${mafiaIds.join(", ")}`);
+  ui.appendLog(`Agents: ${agentDisplay.map((a) => a.id).join(", ")}`);
   if (humanPlays) {
     // Don't reveal LLM roles to the human — they have to figure it out.
     ui.appendLog("You are the mafioso. Good luck.\n");
   } else {
     // God-mode: viewer can see all roles and private logs since they're just watching.
-    const roleLog = assignments.map((a) => `${a.id}=${a.role}`).join(", ");
+    // Show "Alice (paranoid)=mafioso" format so the personality is clear alongside the name.
+    const roleLog = assignments.map((a) => `${a.id} (${a.personality})=${a.role}`).join(", ");
     ui.appendLog(`Roles (hidden from agents): ${roleLog}\n`);
   }
 
@@ -604,9 +628,12 @@ async function runIPDGame(
   onComplete: () => void,
 ): Promise<void> {
   const isCancelled = () => slot.gameId !== myGameId;
-  const agentIds = Object.keys(IPD_PERSONALITIES);
+  const agentDisplay   = IPD_AGENTS.map((a) => ({ id: a.id, personality: a.personality }));
+  const agentIds       = IPD_AGENTS.map((a) => a.id);
+  // Maps name → personality key so the leaderboard can record by personality, not by name.
+  const personalityOf  = Object.fromEntries(IPD_AGENTS.map((a) => [a.id, a.personality]));
 
-  const ui = initIPDLayout(container, agentIds);
+  const ui = initIPDLayout(container, agentDisplay);
   ui.appendLog("=== LLM Arena — Prisoner's Dilemma ===\n");
 
   if (!loadedPromise) {
@@ -628,9 +655,7 @@ async function runIPDGame(
   ui.setStatus("Model ready. Starting match…");
   ui.appendLog("Model ready.\n");
 
-  const agents = Object.entries(IPD_PERSONALITIES).map(
-    ([id, prompt]) => new LLMAgent(id, prompt, client),
-  );
+  const agents = IPD_AGENTS.map(({ id, prompt }) => new LLMAgent(id, prompt, client));
 
   ui.appendLog(`Agents: ${agentIds.join(", ")}`);
   ui.appendLog(`${IPD_ROUNDS} rounds, round-robin\n`);
@@ -664,7 +689,7 @@ async function runIPDGame(
 
   if (isCancelled()) return;
 
-  recordIPDGame(state.scores);
+  recordIPDGame(state.scores, personalityOf);
   onComplete();
   ui.setStatus("Match complete!");
   ui.appendLog("\n=== Final scores ===");

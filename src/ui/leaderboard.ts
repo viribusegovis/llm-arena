@@ -37,14 +37,15 @@ function entry(map: Record<string, PersonalityStats>, id: string): PersonalitySt
 // Record one completed Mafia game. Win = your faction won
 // (mafioso wins if mafia wins; everyone else wins if villagers win).
 // Skips "you" — the human player is not a tracked personality.
+// Uses personality key (not agent name) so stats accumulate correctly across games.
 export function recordMafiaGame(
-  assignments: Array<{ id: string; role: Role }>,
+  assignments: Array<{ personality: string; role: Role }>,
   winner: "mafia" | "villagers",
 ): void {
   const data = load();
-  for (const { id, role } of assignments) {
-    if (id === "you") continue;
-    const s = entry(data.mafia, id);
+  for (const { personality, role } of assignments) {
+    if (personality === "you") continue;
+    const s = entry(data.mafia, personality);
     s.games++;
     const factionWon = (winner === "mafia") === (role === "mafioso");
     if (factionWon) s.wins++;
@@ -53,11 +54,16 @@ export function recordMafiaGame(
 }
 
 // Record one completed IPD match. Win = top scorer in that match.
-export function recordIPDGame(scores: Record<string, number>): void {
+// personalityOf maps agent name → personality key so stats accumulate by strategy.
+export function recordIPDGame(
+  scores: Record<string, number>,
+  personalityOf: Record<string, string>,
+): void {
   const data = load();
   const best = Math.max(...Object.values(scores));
   for (const [id, pts] of Object.entries(scores)) {
-    const s = entry(data.ipd, id);
+    const personality = personalityOf[id] ?? id;
+    const s = entry(data.ipd, personality);
     s.games++;
     s.totalPts += pts;
     if (pts === best) s.wins++;
