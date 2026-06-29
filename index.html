@@ -253,6 +253,68 @@
       .tab-btn.active { background: #1e2838; color: #5bb8f5; border-color: #5bb8f5; }
       .tab-btn:hover:not(.active) { border-color: #3a4050; color: #8892a4; }
 
+      /* ── Play-as-mafioso toggle ─────────────────────────────────────────── */
+      .play-toggle {
+        display: flex; align-items: center; gap: 0.55rem; margin-bottom: 1rem;
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
+      }
+      /* Custom toggle switch built on a hidden checkbox */
+      .play-toggle-input {
+        appearance: none; -webkit-appearance: none;
+        width: 30px; height: 17px; border-radius: 9px;
+        background: #141922; border: 1px solid #2a3040;
+        position: relative; cursor: pointer; flex-shrink: 0;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .play-toggle-input::after {
+        content: ""; position: absolute;
+        width: 11px; height: 11px; border-radius: 50%;
+        background: #4a5568; top: 2px; left: 2px;
+        transition: left 0.2s, background 0.2s;
+      }
+      .play-toggle-input:checked { background: #2d0f0f; border-color: #5a1a1a; }
+      .play-toggle-input:checked::after { left: 15px; background: #f55b5b; }
+      .play-toggle-label { color: #4a5568; cursor: pointer; transition: color 0.2s; }
+      .play-toggle-input:checked + .play-toggle-label { color: #f55b5b; }
+
+      /* ── Human player input panel ────────────────────────────────────────── */
+      /* Appears below the player grid when it's the human's turn to act. */
+      .human-panel {
+        margin-top: 0.75rem; padding: 0.75rem 1rem;
+        background: #0e1420; border: 1px solid #3a1515;
+        border-left: 3px solid #f55b5b; border-radius: 5px;
+      }
+      .human-panel[hidden] { display: none; }
+      .human-panel-label {
+        font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em;
+        color: #f55b5b; margin-bottom: 0.55rem;
+      }
+      .human-prompt { font-size: 0.82rem; color: #8892a4; margin-bottom: 0.5rem; }
+      /* Target buttons for kill / vote */
+      .human-buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .human-target-btn {
+        font-family: inherit; font-size: 0.8rem;
+        padding: 0.3rem 0.75rem; border-radius: 3px;
+        border: 1px solid #3a1515; background: #1a0a0a; color: #f55b5b;
+        cursor: pointer; transition: background 0.15s, border-color 0.15s;
+      }
+      .human-target-btn:hover { background: #2d1010; border-color: #f55b5b; }
+      /* Text area for day-discuss speak */
+      .human-speak-input {
+        font-family: inherit; font-size: 0.82rem; display: block;
+        width: 100%; background: #070910; border: 1px solid #2a3040;
+        border-radius: 3px; padding: 0.4rem 0.6rem; color: #c9cdd4;
+        resize: none; margin-bottom: 0.45rem;
+      }
+      .human-speak-input:focus { outline: none; border-color: #f55b5b; }
+      .human-send-btn {
+        font-family: inherit; font-size: 0.72rem; text-transform: uppercase;
+        letter-spacing: 0.08em; padding: 0.3rem 0.85rem; border-radius: 3px;
+        border: 1px solid #3a1515; background: #2d0f0f; color: #f55b5b;
+        cursor: pointer; transition: background 0.15s;
+      }
+      .human-send-btn:hover { background: #3d1515; }
+
       /* ── Scrolling text log ──────────────────────────────────────────────── */
       .log {
         background: #070910;

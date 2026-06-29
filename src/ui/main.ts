@@ -1,4 +1,5 @@
 import { LLMAgent } from "../agents/llm-agent";
+import { HumanMafiaAgent } from "../agents/human-mafia-agent";
 import { MafiaLLMAgent } from "../agents/mafia-llm-agent";
 import { WllamaClient } from "../llm/wllama-client";
 import { createInitialState as ipdCreateInitial, runRound } from "../referee/ipd";
@@ -119,12 +120,28 @@ const SPEAK_RULES = "When speaking, say exactly one sentence naming a specific p
 
 // Shuffle personalities and assign roles randomly each game.
 // Layout: 1 mafioso, 1 detective, 1 medic, 5 villagers = 8 total.
-function assignRoles(): Array<{ id: string; role: Role; systemPrompt: string }> {
+// When humanPlays is true, the mafioso slot is reserved for "you" and only 7 LLM
+// personalities are used (one is left out each game at random).
+function assignRoles(isHuman: boolean): Array<{ id: string; role: Role; systemPrompt: string }> {
   const shuffled = [...MAFIA_PERSONALITIES].sort(() => Math.random() - 0.5);
   const roles: Role[] = [
     "mafioso", "detective", "medic",
     "villager", "villager", "villager", "villager", "villager",
   ];
+
+  if (isHuman) {
+    // Human takes mafioso; 7 LLM agents take the remaining roles.
+    const llmRoles = roles.slice(1); // detective, medic, villager×5
+    return [
+      { id: "you", role: "mafioso", systemPrompt: "" },
+      ...shuffled.slice(0, 7).map((p, i) => ({
+        id: p.id,
+        role: llmRoles[i],
+        systemPrompt: `${p.personalityPrompt} ${ROLE_INSTRUCTIONS[llmRoles[i]]} ${SPEAK_RULES}`,
+      })),
+    ];
+  }
+
   return shuffled.map((p, i) => ({
     id: p.id,
     role: roles[i],
@@ -162,10 +179,17 @@ const IPD_ROUNDS = 10;
 const client = new WllamaClient();
 let loadedPromise: Promise<void> | null = null;
 
-// ── Tab state ─────────────────────────────────────────────────────────────────
-// gameId increments on every tab switch. Each runner captures its id at launch
-// and returns early at loop checkpoints if the id has moved on (tab switched).
+// ── Tab / game state ──────────────────────────────────────────────────────────
+// gameId increments on every tab switch or mode toggle. Each runner captures its
+// id at launch and returns early at loop checkpoints if the id has moved on.
 let gameId = 0;
+
+// Whether the human is playing as the mafioso. Persists across game restarts.
+let humanPlays = false;
+
+// The active HumanMafiaAgent, if any. Cancelled when the game is interrupted so
+// the player's pending input Promise rejects and the game loop exits cleanly.
+let currentHumanAgent: HumanMafiaAgent | null = null;
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
@@ -185,6 +209,8 @@ async function main(): Promise<void> {
       if (btn.classList.contains("active")) return;
       tabBtns.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
+      currentHumanAgent?.cancel();
+      currentHumanAgent = null;
       gameId++;
       const tab = btn.dataset.tab as "mafia" | "ipd";
       void launchGame(gameContainer, tab, gameId);
@@ -211,12 +237,18 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
   const isCancelled = () => gameId !== myGameId;
 
   // Assign roles randomly each game so the same personality can play any role.
-  const assignments = assignRoles();
-  const mafiaIds   = assignments.map((a) => a.id);
+  const assignments = assignRoles(humanPlays);
+  const mafiaIds    = assignments.map((a) => a.id);
   const detectiveId = assignments.find((a) => a.role === "detective")!.id;
   const medicId     = assignments.find((a) => a.role === "medic")!.id;
 
-  const ui = initMafiaLayout(container, mafiaIds);
+  const ui = initMafiaLayout(container, mafiaIds, humanPlays, (on) => {
+    currentHumanAgent?.cancel();
+    currentHumanAgent = null;
+    humanPlays = on;
+    gameId++;
+    void runMafiaGame(container, gameId);
+  });
   ui.appendLog("=== LLM Arena — Mini-Mafia ===\n");
 
   if (!loadedPromise) {
@@ -238,14 +270,28 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
   ui.setStatus("Model ready. Starting game…");
   ui.appendLog("Model ready.\n");
 
-  const agents = assignments.map(
-    ({ id, systemPrompt }) => new MafiaLLMAgent(id, systemPrompt, client),
-  );
+  // Build agents — human takes the mafioso slot when play mode is on.
+  let humanAgent: HumanMafiaAgent | null = null;
+  const agents = assignments.map(({ id, role, systemPrompt }) => {
+    if (humanPlays && role === "mafioso") {
+      humanAgent = new HumanMafiaAgent(id);
+      humanAgent.onNeedInput = (view, onMove) => ui.showHumanInput(view, onMove);
+      humanAgent.onHide = () => ui.hideHumanInput();
+      return humanAgent;
+    }
+    return new MafiaLLMAgent(id, systemPrompt, client);
+  });
+  currentHumanAgent = humanAgent;
 
   ui.appendLog(`Agents: ${mafiaIds.join(", ")}`);
-  // God-mode: viewer can see all roles; agents only know their own.
-  const roleLog = assignments.map((a) => `${a.id}=${a.role}`).join(", ");
-  ui.appendLog(`Roles (hidden from agents): ${roleLog}\n`);
+  if (humanPlays) {
+    // Don't reveal LLM roles to the human — they have to figure it out.
+    ui.appendLog("You are the mafioso. Good luck.\n");
+  } else {
+    // God-mode: viewer can see all roles and private logs since they're just watching.
+    const roleLog = assignments.map((a) => `${a.id}=${a.role}`).join(", ");
+    ui.appendLog(`Roles (hidden from agents): ${roleLog}\n`);
+  }
 
   let state: MafiaGameState = mafiaCreateInitial(
     assignments.map(({ id, role }) => ({ id, role })),
@@ -309,12 +355,16 @@ async function runMafiaGame(container: HTMLElement, myGameId: number): Promise<v
       } else {
         ui.appendLog(`  (nobody was killed tonight)`);
       }
-      for (const inv of newInvestigations) {
-        ui.appendLog(`  [private — ${detectiveId}] investigated ${inv.target} → ${inv.role}`);
-      }
-      for (const prot of newProtections) {
-        const note = prot.blocked ? " — kill blocked!" : "";
-        ui.appendLog(`  [private — ${medicId}] protected ${prot.target}${note}`);
+      // Only show private logs in god-mode (watch mode). When human is playing,
+      // revealing detective findings or medic targets would be a free win condition.
+      if (!humanPlays) {
+        for (const inv of newInvestigations) {
+          ui.appendLog(`  [private — ${detectiveId}] investigated ${inv.target} → ${inv.role}`);
+        }
+        for (const prot of newProtections) {
+          const note = prot.blocked ? " — kill blocked!" : "";
+          ui.appendLog(`  [private — ${medicId}] protected ${prot.target}${note}`);
+        }
       }
     } else if (phase === "day-discuss") {
       for (const e of newTranscript) ui.appendLog(`  [${e.playerId}]: "${e.text}"`);

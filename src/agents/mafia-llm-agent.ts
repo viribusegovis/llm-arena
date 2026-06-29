@@ -1,6 +1,6 @@
 import type { ChatCompletionTool } from "@wllama/wllama";
 import type { WllamaClient } from "../llm/wllama-client";
-import type { MafiaAgent, MafiaAgentView, MafiaMove } from "../referee/mafia";
+import type { MafiaAgent, MafiaAgentView, MafiaMove, VoteRecord } from "../referee/mafia";
 
 // How many times to re-prompt before giving up on a structured action.
 // If tool calling keeps failing, the fallback is a random legal move (never a crash).
@@ -8,6 +8,26 @@ const MAX_RETRIES = 3;
 
 // Max recent transcript lines shown in vote prompt. Capped low — tiny models echo long context.
 const MAX_VOTE_TRANSCRIPT = 3;
+
+// How many past vote rounds to include in prompts. Two rounds gives pattern signal
+// without bloating the prompt (each round is ~15-20 tokens).
+const MAX_VOTE_HISTORY = 2;
+
+// Formats past vote tallies into a compact single line per round.
+// Example: "Round 1 votes: naive×4, reserved×3 → naive out"
+function formatVoteHistory(history: VoteRecord[]): string {
+  return history
+    .slice(-MAX_VOTE_HISTORY)
+    .map((r) => {
+      const sorted = Object.entries(r.tally)
+        .sort(([, a], [, b]) => b - a)
+        .map(([id, n]) => `${id}×${n}`)
+        .join(", ");
+      const outcome = r.eliminated ? `→ ${r.eliminated} out` : "→ tie";
+      return `Round ${r.round} votes: ${sorted} ${outcome}`;
+    })
+    .join("\n");
+}
 
 // Builds the user-facing part of the prompt for each game phase.
 // Day-discuss is intentionally framed as a plain social situation (no game language) so the
@@ -45,6 +65,9 @@ function buildUserMessage(view: MafiaAgentView): string {
       lines.push(`Night. Choose who to protect: ${targets}`);
     }
   } else if (view.phase === "day-vote") {
+    if (view.voteHistory.length > 0) {
+      lines.push(formatVoteHistory(view.voteHistory));
+    }
     const recent = view.transcript.slice(-MAX_VOTE_TRANSCRIPT);
     if (recent.length > 0) {
       lines.push("Discussion:");
@@ -69,6 +92,11 @@ function buildSpeakMessage(view: MafiaAgentView): string {
     parts.push(`${gone.join(", ")} ${gone.length === 1 ? "has" : "have"} been removed.`);
   }
 
+  // Past vote tallies — lets agents spot patterns like "reserved has avoided votes for 2 rounds".
+  if (view.voteHistory.length > 0) {
+    parts.push(formatVoteHistory(view.voteHistory));
+  }
+
   // Show the last 3 statements from this round only — enough context to react to
   // what was just said without pulling in stale accusations from earlier rounds.
   // Cap at 3: tiny models echo when given too much transcript at once.
@@ -81,14 +109,21 @@ function buildSpeakMessage(view: MafiaAgentView): string {
     }
   }
 
+  // Exclude self and shuffle so the model doesn't just output the first listed name.
+  // Tiny models tend to echo whoever appears first — self-accusation (outputting own name)
+  // is the worst case since it causes other players to vote the speaker out.
+  const others = view.alivePlayers
+    .filter((id) => id !== view.myId)
+    .sort(() => Math.random() - 0.5);
+
   // Pass 1: open accusations — anchor the model to a name with multiple-choice format.
   // Pass 2: reactions — same anchor trick, but framed as a response to what was said.
   // Multiple-choice keeps a player name at the start of the generated text, which
   // makes tiny models far more likely to actually name someone rather than rambling.
   const question =
     view.discussPass === 2
-      ? `What do you say in response — ${view.alivePlayers.join(", ")}?`
-      : `Who do you distrust most — ${view.alivePlayers.join(", ")}?`;
+      ? `What do you say in response — ${others.join(", ")}?`
+      : `Who do you distrust most — ${others.join(", ")}?`;
 
   parts.push(question);
   return parts.join("\n");

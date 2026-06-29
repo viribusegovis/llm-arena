@@ -48,6 +48,15 @@ export interface TranscriptEntry {
   text: string;
 }
 
+// Summary of one completed day-vote round — public info, everyone watched the vote.
+export interface VoteRecord {
+  round: number;
+  // How many votes each candidate received.
+  tally: Record<string, number>;
+  // Who was eliminated, or undefined on a tie (nobody eliminated).
+  eliminated?: string;
+}
+
 // Permanent record of a player being removed from the game.
 // Role is publicly revealed on elimination — gives villagers useful signal from day votes.
 export interface EliminationRecord {
@@ -82,6 +91,8 @@ export interface MafiaGameState {
   };
   // All eliminations so far, in chronological order. Roles are revealed here.
   eliminated: EliminationRecord[];
+  // Vote tallies from all completed day-vote phases, in chronological order.
+  voteHistory: VoteRecord[];
   // Set once the game ends. Undefined while still in progress.
   winner?: "mafia" | "villagers";
 }
@@ -101,6 +112,8 @@ export interface MafiaAgentView {
   transcript: TranscriptEntry[];
   // Publicly announced eliminations (role revealed on elimination).
   eliminated: EliminationRecord[];
+  // Vote tallies from all completed rounds — useful for spotting voting patterns.
+  voteHistory: VoteRecord[];
   // Detective's private investigation results. Present only when myRole === "detective".
   investigationResults?: Array<{ target: string; role: Role }>;
   // Medic's private protection history. Present only when myRole === "medic".
@@ -137,6 +150,7 @@ export function createInitialState(
     votes: {},
     nightActions: {},
     eliminated: [],
+    voteHistory: [],
   };
 }
 
@@ -281,6 +295,7 @@ export function buildAgentView(
     alivePlayers: state.players.filter((p) => p.isAlive).map((p) => p.id),
     transcript: state.transcript,
     eliminated: state.eliminated,
+    voteHistory: state.voteHistory,
     legalMoves: getLegalMoves(state, playerId),
     discussPass,
   };
@@ -416,7 +431,11 @@ async function stepDayDiscuss(
   for (let pass = 1; pass <= passes; pass++) {
     callbacks?.onDiscussPass?.(pass, passes);
 
-    for (const agent of agents) {
+    // Shuffle each pass independently so accusation order varies and no agent
+    // consistently speaks first (first speaker sets the agenda for tiny models).
+    const order = [...agents].sort(() => Math.random() - 0.5);
+
+    for (const agent of order) {
       const isAlive = state.players.find((p) => p.id === agent.id)?.isAlive;
       if (!isAlive) continue;
 
@@ -492,9 +511,17 @@ function resolveDayVote(
           .map(([id]) => id)
       : [];
 
+  // Record the tally before clearing votes so agents can reference it next round.
+  const record: VoteRecord = {
+    round: state.round,
+    tally,
+    eliminated: topTargets.length === 1 ? topTargets[0] : undefined,
+  };
+  const voteHistory = [...state.voteHistory, record];
+
   // Tie (or no votes): no elimination this round. Advance to next night.
   if (topTargets.length !== 1) {
-    return { ...state, votes: {}, phase: "night", round: state.round + 1 };
+    return { ...state, voteHistory, votes: {}, phase: "night", round: state.round + 1 };
   }
 
   const eliminatedId = topTargets[0];
@@ -517,6 +544,7 @@ function resolveDayVote(
     ...state,
     players,
     eliminated,
+    voteHistory,
     votes: {},
     phase: "night",
     round: state.round + 1,

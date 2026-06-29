@@ -1,5 +1,5 @@
 import type { GameState } from "../referee/types";
-import type { MafiaGameState } from "../referee/mafia";
+import type { MafiaAgentView, MafiaGameState, MafiaMove } from "../referee/mafia";
 
 // One accent color per agent, shared across both game types.
 // hex: CSS color string. rgb: same values as "r,g,b" for rgba() strings.
@@ -11,6 +11,10 @@ const AGENT_COLORS: Record<string, { hex: string; rgb: string }> = {
   "deceptive":  { hex: "#f5a623", rgb: "245,166,35"  }, // amber  — hard to read
   "impulsive":  { hex: "#c47ef5", rgb: "196,126,245" }, // purple — jumps to conclusions
   "reserved":   { hex: "#5fd0c0", rgb: "95,208,192"  }, // teal   — quiet, watchful
+  "dramatic":   { hex: "#e84393", rgb: "232,67,147"  }, // pink   — theatrical, expressive
+  "skeptical":  { hex: "#ff9d4f", rgb: "255,157,79"  }, // orange — challenges everything
+  // ── Human player ─────────────────────────────────────────────────────────
+  "you":        { hex: "#ffffff", rgb: "255,255,255"  }, // white  — stands out from LLMs
   // ── IPD agents ───────────────────────────────────────────────────────────
   "tit-for-tat":      { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue
   "always-defect":    { hex: "#f55b5b", rgb: "245,91,91"   }, // red
@@ -254,12 +258,29 @@ export interface MafiaUI {
   // Display the game-over banner.
   showWinner(winner: "mafia" | "villagers"): void;
   appendLog(line: string): void;
+  // Show phase-appropriate controls for the human player's turn.
+  // onMove is called with the chosen move when the player acts.
+  showHumanInput(view: MafiaAgentView, onMove: (move: MafiaMove) => void): void;
+  // Hide the human input panel (called on cancellation or after submission).
+  hideHumanInput(): void;
 }
 
-export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI {
+// humanOn: initial state of the "Play as Mafioso" toggle.
+// onToggle: fired when the toggle changes — caller should restart the game with the new mode.
+export function initMafiaLayout(
+  root: HTMLElement,
+  agentIds: string[],
+  humanOn: boolean,
+  onToggle: (on: boolean) => void,
+): MafiaUI {
   root.innerHTML = `
     <h1>LLM Arena</h1>
     <p class="tagline">Mini-Mafia &middot; 8 agents &middot; in-browser WebGPU inference</p>
+
+    <div class="play-toggle">
+      <input type="checkbox" id="human-toggle" class="play-toggle-input" ${humanOn ? "checked" : ""}>
+      <label for="human-toggle" class="play-toggle-label">Play as Mafioso</label>
+    </div>
 
     <p id="status" class="status">Starting&hellip;</p>
     <div id="progress-wrap" class="progress-wrap">
@@ -269,6 +290,10 @@ export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI 
     <section class="panel">
       <h2>Players</h2>
       <div id="player-grid" class="player-grid"></div>
+      <div id="human-panel" class="human-panel" hidden>
+        <div class="human-panel-label">Your turn</div>
+        <div id="human-panel-body"></div>
+      </div>
       <div id="win-banner"></div>
     </section>
 
@@ -326,8 +351,16 @@ export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI 
   const progressWrapEl = root.querySelector<HTMLElement>("#progress-wrap")!;
   const progressFillEl = root.querySelector<HTMLElement>("#progress-fill")!;
   const playerGridEl   = root.querySelector<HTMLElement>("#player-grid")!;
+  const humanPanelEl   = root.querySelector<HTMLElement>("#human-panel")!;
+  const humanPanelBodyEl = root.querySelector<HTMLElement>("#human-panel-body")!;
   const winBannerEl    = root.querySelector<HTMLElement>("#win-banner")!;
   const logEl          = root.querySelector<HTMLElement>("#log")!;
+  const toggleEl       = root.querySelector<HTMLInputElement>("#human-toggle")!;
+
+  // The "you" player id if human mode is active — used to show their role badge immediately.
+  const humanId = humanOn ? agentIds.find((id) => id === "you") : undefined;
+
+  toggleEl.addEventListener("change", () => onToggle(toggleEl.checked));
 
   // Persists each player's latest quote across re-renders so it stays visible
   // in their row even after updatePlayers() rebuilds the grid DOM.
@@ -339,9 +372,9 @@ export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI 
   const emptyState: MafiaGameState = {
     phase: "night", round: 1,
     players: agentIds.map((id) => ({ id, role: "villager", isAlive: true })),
-    investigations: [], protections: [], transcript: [], votes: {}, nightActions: {}, eliminated: [],
+    investigations: [], protections: [], transcript: [], votes: {}, nightActions: {}, eliminated: [], voteHistory: [],
   };
-  renderPlayerGrid(emptyState, agentIds, playerGridEl, quotes);
+  renderPlayerGrid(emptyState, agentIds, playerGridEl, quotes, humanId);
 
   return {
     setStatus(text) { statusEl.textContent = text; },
@@ -380,7 +413,56 @@ export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI 
     updatePlayers(state) {
       // Phase is over — no active speaker, re-render with persisted quotes.
       activeQuoteId = null;
-      renderPlayerGrid(state, agentIds, playerGridEl, quotes);
+      renderPlayerGrid(state, agentIds, playerGridEl, quotes, humanId);
+    },
+
+    showHumanInput(view, onMove) {
+      humanPanelEl.hidden = false;
+
+      if (view.phase === "day-discuss") {
+        humanPanelBodyEl.innerHTML = `
+          <p class="human-prompt">What do you say?</p>
+          <textarea id="human-text" class="human-speak-input" rows="2" maxlength="200" placeholder="Say one sentence…"></textarea>
+          <button id="human-send" class="human-send-btn">Send</button>
+        `;
+        const textarea = humanPanelBodyEl.querySelector<HTMLTextAreaElement>("#human-text")!;
+        const sendBtn  = humanPanelBodyEl.querySelector<HTMLButtonElement>("#human-send")!;
+        textarea.focus();
+
+        const submit = () => {
+          const text = textarea.value.trim();
+          if (!text) return;
+          humanPanelEl.hidden = true;
+          onMove({ kind: "speak", text });
+        };
+        sendBtn.addEventListener("click", submit, { once: true });
+        // Enter (without Shift) submits; Shift+Enter inserts a newline.
+        textarea.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+        });
+      } else {
+        // Night (kill) or day-vote: pick from a list of valid targets.
+        const targets = view.legalMoves.map((m) => (m as { target: string }).target);
+        const kind    = view.legalMoves[0].kind as "kill" | "vote";
+        const prompt  = kind === "kill" ? "Choose who to eliminate tonight:" : "Vote to eliminate:";
+
+        humanPanelBodyEl.innerHTML = `
+          <p class="human-prompt">${prompt}</p>
+          <div class="human-buttons">
+            ${targets.map((t) => `<button class="human-target-btn" data-target="${t}">${t}</button>`).join("")}
+          </div>
+        `;
+        for (const btn of humanPanelBodyEl.querySelectorAll<HTMLButtonElement>(".human-target-btn")) {
+          btn.addEventListener("click", () => {
+            humanPanelEl.hidden = true;
+            onMove({ kind, target: btn.dataset.target! } as MafiaMove);
+          }, { once: true });
+        }
+      }
+    },
+
+    hideHumanInput() {
+      humanPanelEl.hidden = true;
     },
 
     showWinner(winner) {
@@ -399,11 +481,13 @@ export function initMafiaLayout(root: HTMLElement, agentIds: string[]): MafiaUI 
 
 // Each row shows the agent's name, role badge, elimination note, and their latest
 // inline quote. Quotes persist via the `quotes` map passed in from the layout closure.
+// humanId: if set, that player's role badge is shown immediately (they know their own role).
 function renderPlayerGrid(
   state: MafiaGameState,
   agentIds: string[],
   container: HTMLElement,
   quotes: Record<string, string>,
+  humanId?: string,
 ): void {
   container.innerHTML = agentIds
     .map((id) => {
@@ -411,14 +495,16 @@ function renderPlayerGrid(
       const color   = agentColor(id);
       const elim    = state.eliminated.find((e) => e.playerId === id);
       const isAlive = player.isAlive;
+      const isHuman = id === humanId;
 
       const dotClass = isAlive ? "alive" : "dead";
       const dot      = isAlive ? "●" : "✕";
       const rowClass = isAlive ? "" : " eliminated";
 
-      // Role badge: "?" while alive, actual role once eliminated.
-      const badge = elim
-        ? `<span class="player-badge role-${elim.role}">${elim.role}</span>`
+      // Human player always sees their own role badge; others see "?" until eliminated.
+      const visibleRole = elim?.role ?? (isHuman ? player.role : null);
+      const badge = visibleRole
+        ? `<span class="player-badge role-${visibleRole}">${visibleRole}${isHuman && !elim ? " (you)" : ""}</span>`
         : `<span class="player-badge role-hidden">?</span>`;
 
       // Elimination note: round + cause, visible only once eliminated.
