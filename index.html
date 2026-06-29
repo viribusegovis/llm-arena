@@ -252,6 +252,25 @@
       }
       .tab-btn.active { background: #1e2838; color: #5bb8f5; border-color: #5bb8f5; }
       .tab-btn:hover:not(.active) { border-color: #3a4050; color: #8892a4; }
+      .game-controls { margin-left: auto; display: flex; align-items: center; gap: 0.4rem; }
+      .game-state {
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+        font-weight: bold; padding: 0.25rem 0.6rem; border-radius: 3px;
+        white-space: nowrap;
+      }
+      .game-state[hidden] { display: none; }
+      .game-state-paused   { color: #f5c842; background: rgba(245,200,66,0.08); border: 1px solid rgba(245,200,66,0.3); }
+      .game-state-stopped  { color: #f55b5b; background: rgba(245,91,91,0.08);  border: 1px solid rgba(245,91,91,0.3);  }
+      .game-state-finished { color: #6ee77a; background: rgba(110,231,122,0.08); border: 1px solid rgba(110,231,122,0.3); }
+      .ctrl-btn {
+        font-family: inherit; font-size: 0.75rem; text-transform: uppercase;
+        letter-spacing: 0.1em; padding: 0.35rem 0.9rem; border-radius: 3px;
+        border: 1px solid #2a3040; background: transparent; color: #4a5568;
+        cursor: pointer; transition: all 0.2s;
+      }
+      .ctrl-btn:hover { border-color: #6ee77a; color: #6ee77a; }
+      .ctrl-btn-stop:hover { border-color: #f55b5b; color: #f55b5b; }
+      .ctrl-btn[hidden] { display: none; }
 
       /* ── Play-as-mafioso toggle ─────────────────────────────────────────── */
       .play-toggle {
@@ -329,6 +348,28 @@
         word-break: break-all;
         line-height: 1.5;
       }
+
+      /* ── Leaderboard ─────────────────────────────────────────────────────── */
+      .lb-toolbar { display: flex; justify-content: flex-end; margin-bottom: 1.5rem; }
+      .lb-reset-btn {
+        font-family: inherit; font-size: 0.72rem; text-transform: uppercase;
+        letter-spacing: 0.08em; padding: 0.3rem 0.85rem; border-radius: 3px;
+        border: 1px solid #3a4050; background: transparent; color: #4a5568;
+        cursor: pointer; transition: all 0.2s;
+      }
+      .lb-reset-btn:hover { border-color: #f55b5b; color: #f55b5b; }
+      .lb-hint { font-size: 0.75rem; color: #4a5568; font-style: italic; margin-bottom: 0.75rem; }
+      .lb-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+      .lb-th {
+        padding: 6px 12px; color: #4a5568; font-weight: normal;
+        text-align: right; border-bottom: 1px solid #141922;
+      }
+      .lb-th-name { text-align: left; }
+      .lb-td {
+        padding: 6px 12px; color: #8892a4;
+        text-align: right; border-bottom: 1px solid #0e1420;
+      }
+      .lb-td-name { text-align: left; font-weight: bold; }
     </style>
   </head>
   <body>

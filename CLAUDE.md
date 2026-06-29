@@ -5,7 +5,8 @@ See `llm-arena-build-plan.md` for the full build plan — phases, locked decisio
 ## Status
 
 - Phase 0 (de-risk spike) — complete. Key findings: GPU offload requires explicit `n_gpu_layers: -1` (wllama default is CPU-only despite README claims); thinking mode requires explicit `enable_thinking: false`; single-word move extraction wins over tool-call (100% valid, 6× faster); OPFS cache confirmed; system-prompt personalities confirmed distinct.
-- Phase 1 — in progress. Milestones 1a, 1b, 1c complete. **Read `HANDOFF.md` before resuming** — it has the current file layout, all confirmed gotchas, the streaming API, and the exact plan for 1d (minimal UI). Delete it once 1d is done.
+- Phase 1 — complete. Streaming UI, dual-game tabs (Mafia + IPD), human mafioso play mode.
+- Phase 2 — complete. Leaderboard (localStorage), adaptive/counter IPD agents, Restart/Pause/Stop controls, tab state preservation (three persistent containers, per-slot Slot state). **Read `HANDOFF.md` before resuming.**
 
 ## Communication style
 
@@ -52,6 +53,7 @@ See `llm-arena-build-plan.md` for the full build plan — phases, locked decisio
 - Commit messages: Conventional Commits — `type(scope): summary` (types: feat, fix, chore, docs, refactor, test, perf, build, ci). Imperative, lowercase summary, no trailing period. (Default convention — say if you'd rather plain freeform messages.)
 - Branch names: `type/short-kebab-description` (e.g. `feat/llm-agent`, `fix/oauth-retry`).
 - Never push or open a PR automatically. Propose it at sensible points (a milestone passing, before a risky change) and wait for my go-ahead.
+- Ocasionally check and ask for a commit when the changes are deemed enough to do so. I dont want commits too big but also not too small.
 
 ## Naming
 

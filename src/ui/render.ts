@@ -19,11 +19,12 @@ const AGENT_COLORS: Record<string, { hex: string; rgb: string }> = {
   "tit-for-tat":      { hex: "#5bb8f5", rgb: "91,184,245"  }, // blue
   "always-defect":    { hex: "#f55b5b", rgb: "245,91,91"   }, // red
   "always-cooperate": { hex: "#6ee77a", rgb: "110,231,122" }, // green
-  "grudger":          { hex: "#f5a623", rgb: "245,166,35"  }, // amber
+  "adaptive":         { hex: "#f5a623", rgb: "245,166,35"  }, // amber
+  "counter":          { hex: "#c47ef5", rgb: "196,126,245" }, // purple
 };
 const FALLBACK_COLOR = { hex: "#8892a4", rgb: "136,146,164" };
 
-function agentColor(id: string) {
+export function agentColor(id: string) {
   return AGENT_COLORS[id] ?? FALLBACK_COLOR;
 }
 
@@ -104,7 +105,8 @@ export function initIPDLayout(root: HTMLElement, agentIds: string[]): ArenaUI {
           <li><span class="agent-chip" style="color:#5bb8f5">tit-for-tat</span> &mdash; cooperates on the first move, then mirrors whatever the opponent did last round. The classic Axelrod winner.</li>
           <li><span class="agent-chip" style="color:#f55b5b">always-defect</span> &mdash; defects every single round regardless of context. Exploits cooperators; draws against other defectors.</li>
           <li><span class="agent-chip" style="color:#6ee77a">always-cooperate</span> &mdash; cooperates unconditionally. Maximises mutual gains but is easily exploited.</li>
-          <li><span class="agent-chip" style="color:#f5a623">grudger</span> &mdash; cooperates until the opponent defects once, then defects forever. Patient but unforgiving.</li>
+          <li><span class="agent-chip" style="color:#f5a623">adaptive</span> &mdash; no fixed rule. Given the payoff matrix and round history, it decides each move by its own judgment. Behaviour emerges from the model.</li>
+          <li><span class="agent-chip" style="color:#c47ef5">counter</span> &mdash; explicitly reads the opponent&rsquo;s pattern and applies the counter-strategy: exploit cooperators, match defectors, cooperate against mirrors.</li>
         </ul>
 
         <p class="explainer-subhead">What you&rsquo;re watching</p>
